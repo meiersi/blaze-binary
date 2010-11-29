@@ -92,15 +92,15 @@ writeWord8 x = exactWrite 1 (`poke` x)
 {-# INLINE writeWord8 #-}
 
 fromWrite :: Write -> Builder
-fromWrite (Write size wio) =
+fromWrite (Write maxSize wio) =
     fromBuildStepCont step
   where
     step k (BufRange op ope)
-      | op `plusPtr` size <= ope = do
+      | op `plusPtr` maxSize <= ope = do
           op' <- runWriteIO wio op
           let !br' = BufRange op' ope
           k br'
-      | otherwise = return $ bufferFull size op (step k)
+      | otherwise = return $ bufferFull maxSize op (step k)
 {-# INLINE fromWrite #-}
 
 fromWriteSingleton :: (a -> Write) -> a -> Builder
@@ -110,15 +110,36 @@ fromWriteSingleton write =
     mkBuilder x = fromBuildStepCont step
       where
         step k (BufRange op ope)
-          | op `plusPtr` size <= ope = do
+          | op `plusPtr` maxSize <= ope = do
               op' <- runWriteIO wio op
               let !br' = BufRange op' ope
               k br'
-          | otherwise = return $ bufferFull size op (step k)
+          | otherwise = return $ bufferFull maxSize op (step k)
           where
-            Write size wio = write x
+            Write maxSize wio = write x
 {-# INLINE fromWriteSingleton #-}
 
+-- | Construct a 'Builder' writing a list of data one element at a time.
+fromWriteList :: (a -> Write) -> [a] -> Builder
+fromWriteList write = 
+    makeBuilder
+  where
+    makeBuilder xs0 = fromBuildStepCont $ step xs0
+      where
+        step xs1 k !(BufRange op0 ope0) = go xs1 op0
+          where
+            go [] !op = do
+               let !br' = BufRange op ope0
+               k br'
+
+            go xs@(x':xs') !op
+              | op `plusPtr` maxSize <= ope0 = do
+                  !op' <- runWriteIO wio op
+                  go xs' op'
+              | otherwise = return $ bufferFull maxSize op (step xs k)
+              where
+                Write maxSize wio = write x'
+{-# INLINE fromWriteList #-}
 
 ------------------------------------------------------------------------------
 -- Testing the abstraction

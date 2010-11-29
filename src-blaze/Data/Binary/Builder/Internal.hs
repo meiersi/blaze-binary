@@ -14,10 +14,13 @@
 --
 module Data.Binary.Builder.Internal (
 
-  -- * Core Types
-    BufRange
+  -- * Build Steps
+    BufRange(..)
   , BuildSignal
   , BuildStep
+  , done
+  , bufferFull
+  , insertByteString
 
   -- * Builder
   , Builder
@@ -36,9 +39,16 @@ module Data.Binary.Builder.Internal (
   , writeN
   , exactWrite
   , boundedWrite
+  , fromWrite
+  , fromWriteSingleton
+  , fromWriteList
 
   -- * Execution
   , toLazyByteString
+
+  -- * Deafult Sizes
+  , defaultBufferSize
+  , defaultMaximalCopySize 
 ) where
 
 import Foreign
