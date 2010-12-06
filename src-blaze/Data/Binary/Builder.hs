@@ -62,8 +62,8 @@ module Data.Binary.Builder
       Builder
 
       -- * Creating builders
-    , module Data.Binary.Encoding.Word
-    , module Data.Binary.Builder.ByteString
+    , module Blaze.ByteString.Builder.Word
+    , module Blaze.ByteString.Builder.ByteString
     , flush
     , fromPut
 
@@ -88,17 +88,21 @@ module Data.Binary.Builder
     , putWord64host           --
     ) where
 
-import Data.Binary.Builder.Internal
-import Data.Binary.Builder.ByteString
+import           Data.Binary.Builder.Internal hiding (toLazyByteString)
+import qualified Data.Binary.Builder.Internal as Internal
 
-import Data.Binary.Encoding.Word
+
+import qualified Data.ByteString.Lazy as L
+
+import Blaze.ByteString.Builder.ByteString
+import Blaze.ByteString.Builder.Word
 
 import Data.Monoid
 import Data.Word
 
-------------------------------------------------------------------------------
--- API Compatibility to Data.Binary.Builder from 'binary'
-------------------------------------------------------------------------------
+-- | Execute a builder.
+toLazyByteString :: Builder -> L.ByteString
+toLazyByteString = snd . Internal.toLazyByteString . putBuilder
 
 -- | /O(1)/. An empty builder. 
 --

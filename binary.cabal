@@ -51,6 +51,8 @@ library
                    Data.Binary.Get,
                    Data.Binary.Builder
 
+  other-modules:   Data.Binary.Builder.Internal
+
   extensions:      CPP,
                    FlexibleContexts
 
