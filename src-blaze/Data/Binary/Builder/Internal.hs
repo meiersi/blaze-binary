@@ -160,13 +160,13 @@ toLazyByteString put =
     outputBS bs = LBSM ((), L.Chunk bs)
 
 
+{-
 -- | A Builder that traces a message
 traceBuilder :: String -> Builder 
 traceBuilder msg = fromBuildStepCont $ \k br@(BufRange op ope) -> do
     putStrLn $ "traceBuilder " ++ show (op, ope) ++ ": " ++ msg
     k br
 
-{-
 test2 :: Word8 -> [S.ByteString]
 test2 x = L.toChunks $ toLazyByteString2 $ fromBuilder $ mconcat
   [ traceBuilder "before flush" 
