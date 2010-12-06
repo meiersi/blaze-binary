@@ -18,7 +18,7 @@ module Data.Binary.Put (
 
     -- * The Put type
       Put
-    , PutM(..)
+    , PutM
     , runPut
     , runPutM
     , putBuilder

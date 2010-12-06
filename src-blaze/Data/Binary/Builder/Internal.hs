@@ -58,9 +58,9 @@ import qualified Data.ByteString.Internal      as S
 import qualified Data.ByteString.Lazy          as L
 import qualified Data.ByteString.Lazy.Internal as L
 
-import Data.Binary.Builder.Internal.Types
-import Data.Binary.Builder.Internal.Buffer
-import Data.Binary.Builder.Internal.Write
+import Blaze.ByteString.Builder.Internal.Types
+import Blaze.ByteString.Builder.Internal.Buffer
+import Blaze.ByteString.Builder.Internal.Write
 
 
 ------------------------------------------------------------------------------
@@ -83,13 +83,6 @@ defaultBufferSize = 32 * 1024 - overhead -- Copied from Data.ByteString.Lazy.
 defaultMinimalBufferSize :: Int
 defaultMinimalBufferSize = 4 * 1024 - overhead
     where overhead = 2 * sizeOf (undefined :: Int)
-
--- | The default length (64) for the first buffer to be allocated when
--- converting a 'Builder' to a lazy bytestring. 
---
--- See 'toLazyByteStringWith' for further explanation.
-defaultFirstBufferSize :: Int
-defaultFirstBufferSize = 64
 
 -- | The maximal number of bytes for that copying is cheaper than direct
 -- insertion into the output stream. This takes into account the fragmentation
@@ -126,7 +119,7 @@ flush = fromBuildStepCont step
 
               
 -- | A monad for lazily composing lazy bytestrings using continuations.
-newtype LBSM a = LBSM { unLBSM :: (a, L.ByteString -> L.ByteString) }
+newtype LBSM a = LBSM (a, L.ByteString -> L.ByteString)
 
 instance Monad LBSM where
     return x                       = LBSM (x, id)
