@@ -3,15 +3,17 @@
 -- parsers.
 module Attoget where
 
-import           Data.Maybe (fromMaybe)
+import           Data.Char (ord)
 import qualified Data.ByteString                 as S
 import qualified Data.ByteString.Unsafe          as S
 -- import qualified Data.ByteString.Internal        as S
 import qualified Data.ByteString.Lazy            as L
 import qualified Data.ByteString.Lazy.Internal   as L
+import           Data.ByteString.Char8 () 
 
 import           Control.Applicative
--- import           Control.Arrow
+import           Control.Monad
+-- import           Criterion.Main (defaultMain, nf, bench)
 
 import           Foreign
 
@@ -30,59 +32,49 @@ import           Foreign
 --    issues. They should however not be too difficult.
 --    
 
-data InputConsumed = None | Some
-
--- | Unconsumed input is represented as a lazy bytestring continuation to
--- enable O(1) appends.
-type LBSC = L.ByteString -> L.ByteString
-
 -- | Signal of the parser to its driver.
 data Signal a = 
-         Result  a             S.ByteString
-         -- ^ Result was computed and some unconsumed input remains.
+         Result  a {-# UNPACK #-} !S.ByteString
+         -- ^ Result together with remaining input.
        | Partial (ParseStep a)
-         -- ^ Tells the driver that more input is required.
-       | Fail    InputConsumed S.ByteString
-         -- ^ Failure with the information whether some input was consumed and
-         -- the remaining input.
+         -- ^ More input is required.
+       | Fail [String] S.ByteString 
+         -- ^ Failure, stack of error messages, and remaining input.
+         -- Non-strict in the second argument to avoid redundant work in case
+         -- of nested 'try's.
 
--- | Type of a parsing step.
-newtype ParseStep r = ParseStep { runParseStep :: S.ByteString -> Signal r }
+-- | A parsing step. This is already a fully, fledged parsing monad. The
+-- only difference to the 'Parser' type is that it does not use CPS for
+-- the bind operator.
+newtype ParseStep r = ParseStep 
+          { runParseStep :: S.ByteString -> Signal r }
 
--- | Type of the result continuation
-type ResultC r a = a -> ParseStep r
+-- | A CPS version of 'ParseStep'.
+newtype Parser a = Parser 
+          { unParser :: forall r. (a -> ParseStep r) -> ParseStep r }
 
-data Parser a = Parser { runParser :: forall r. ResultC r a -> ParseStep r }
 
+-- ParseStep operations
+-----------------------
 
-instance Functor Signal where
-  fmap f (Result x inp) = Result (f x) inp
-  fmap f (Partial next) = Partial (fmap f next)
-  fmap _ (Fail co inp)  = Fail co inp
-
-instance Functor ParseStep where
-  fmap f = ParseStep . fmap (fmap f) . runParseStep
-
-instance Monad ParseStep where
-  return x  = ParseStep $ Result x
-  m >>= f   = ParseStep $ \bs -> 
-                  case runParseStep m bs of
-                      Result x rest -> runParseStep (f x) rest
-                      Partial next  -> Partial (next >>= f)
-                      Fail co rest  -> Fail co rest
-
-  fail _msg = ParseStep $ Fail None
-
+-- | Parsec style alternative for 'ParseStep'.
+{-# INLINE plus_ps #-}
 plus_ps :: ParseStep a -> ParseStep a -> ParseStep a
-plus_ps ps1 ps2 = ParseStep $ \bs ->
-    case runParseStep ps1 bs of
-        Partial next         -> Partial (plus_ps next ps2)
-        Fail None rest       -> runParseStep ps2 rest
-        signal@(Result _ _ ) -> signal
-        signal@(Fail Some _) -> signal
+plus_ps ps1 ps2 = 
+    ParseStep $ runPS 0 ps1
+  where
+    runPS len0 ps bs = case runParseStep ps bs of
+        Fail _errs rest 
+          | S.length rest == len -> runParseStep ps2 rest
+        Partial next             -> Partial (ParseStep $ runPS len next)
+        signal                   -> signal
+      where
+        !len = len0 + S.length bs
 
+-- | Parsec's 'try' operator.
 try_ps :: ParseStep a -> ParseStep a
-try_ps ps = ParseStep $ run id (runParseStep ps)
+try_ps ps = 
+    ParseStep $ run id (runParseStep ps)
   where
     run lbsC step bs = case step bs of
         signal@(Result _ _) -> signal
@@ -92,56 +84,145 @@ try_ps ps = ParseStep $ run id (runParseStep ps)
         -- Otherwise, nested 'try's would perform redundant work, as only the
         -- stored input of the outermost 'try' will be used for the next
         -- parser.
-        Fail _ _ -> Fail None (S.concat $ L.toChunks $ lbsC L.empty)
+        Fail errs _ -> 
+           Fail ("try" : errs) (S.concat $ L.toChunks $ lbsC L.empty)
+
+
+-- Parser operations
+--------------------
+
+-- | Parsec style alternative for 'Parser'.
+{-# INLINE plus #-}
+plus :: Parser a -> Parser a -> Parser a
+plus p1 p2 = 
+    Parser $ runP
+  where
+    runP k = 
+        runPS 0 (unParser p1 return)
+      where
+        runPS len0 ps = ParseStep $ \bs -> 
+            case runParseStep ps bs of
+                Result x rest  -> runParseStep (k x) rest
+                Partial next   -> 
+                  let !len = len0 + S.length bs in Partial (runPS len next)
+                Fail errs rest 
+                  | S.length rest == len0 + S.length bs ->
+                      runParseStep (unParser p2 k) rest
+                  | otherwise -> Fail errs rest
+
+-- | Parsec's 'try' operator for 'Parser'.
+try :: Parser a -> Parser a
+try p = 
+    Parser $ runP
+  where
+    runP k = ParseStep $ runPS id (runParseStep $ unParser p return)
+      where
+        runPS lbsC step bs = case step bs of
+          Result x rest -> runParseStep (k x) rest
+          Partial next  -> Partial $
+              ParseStep $ runPS (lbsC . L.chunk bs) (runParseStep next)
+          Fail errs _ -> 
+              Fail ("try" : errs) (S.concat $ L.toChunks $ lbsC L.empty)
+
+
+-- Instances
+------------
+
+instance Functor Signal where
+  {-# INLINE fmap #-}
+  fmap f (Result x inp)  = Result (f x) inp
+  fmap f (Partial next)  = Partial (fmap f next)
+  fmap _ (Fail errs inp) = Fail errs inp
+
+
+instance Functor ParseStep where
+  {-# INLINE fmap #-}
+  fmap f = ParseStep . fmap (fmap f) . runParseStep
+
+instance Applicative ParseStep where
+  {-# INLINE pure #-}
+  pure  = return
+  {-# INLINE (<*>) #-}
+  (<*>) = ap
+
+instance Alternative ParseStep where
+  {-# INLINE empty #-}
+  empty = fail "alternative: empty"
+
+  {-# INLINE (<|>) #-}
+  (<|>) = plus_ps
+
+instance Monad ParseStep where
+  {-# INLINE return #-}
+  return x  = ParseStep $ Result x
+
+  {-# INLINE (>>=) #-}
+  m >>= f   = ParseStep $ \bs -> 
+                  case runParseStep m bs of
+                      Result x rest  -> runParseStep (f x) rest
+                      Partial next   -> Partial (next >>= f)
+                      Fail errs rest -> Fail errs rest
+
+  {-# INLINE (>>) #-}
+  m >> m'   = ParseStep $ \bs -> 
+                  case runParseStep m bs of
+                      Result _ rest  -> runParseStep m' rest
+                      Partial next   -> Partial (next >> m')
+                      Fail errs rest -> Fail errs rest
+
+  {-# INLINE fail #-}
+  fail msg = ParseStep $ Fail [msg]
+
+instance MonadPlus ParseStep where
+  {-# INLINE mzero #-}
+  mzero = empty
+  {-# INLINE mplus #-}
+  mplus = (<|>)
+
 
 
 -- Parser
 ---------
 
 instance Functor Parser where
-  fmap f p = Parser $ \k -> runParser p (k . f)
+  {-# INLINE fmap #-}
+  fmap f p = Parser $ \k -> unParser p (k . f)
 
 instance Applicative Parser where
+  {-# INLINE pure #-}
   pure x  = Parser $ \k -> k x
-  f <*> x = Parser $ \k -> runParser f (\f' -> runParser x (\x' -> k (f' x')))
+  {-# INLINE (<*>) #-}
+  f <*> x = Parser $ \k -> unParser f (\f' -> unParser x (\x' -> k (f' x')))
+  {-# INLINE (<*) #-}
+  x <* y  = Parser $ \k -> unParser x (\x' -> unParser y (\_ -> k x'))
+  {-# INLINE (*>) #-}
+  x *> y  = Parser $ \k -> unParser x (\_ -> unParser y k)
+
+instance Alternative Parser where
+  {-# INLINE empty #-}
+  empty = fail "alternative: empty"
+  {-# INLINE (<|>) #-}
+  (<|>) = plus
 
 instance Monad Parser where
-  return  = pure
-  x >>= f = Parser $ \k -> runParser x (\x' -> runParser (f x') k)
+  {-# INLINE return #-}
+  return   = pure
+  {-# INLINE (>>=) #-}
+  x >>= f  = Parser $ \k -> unParser x (\x' -> unParser (f x') k)
+  {-# INLINE (>>) #-}
+  (>>) = (*>)
+  {-# INLINE fail #-}
+  fail err = Parser $ \_ -> fail err
 
-plus :: Parser a -> Parser a -> Parser a
-plus p1 p2 = 
-    Parser $ runP
-  where
-    runP k = 
-        runPS (runParser p1 return)
-      where
-        runPS ps = ParseStep $ \bs -> 
-            case runParseStep ps bs of
-                Result x rest  -> runParseStep (k x) rest
-                Partial next   -> Partial (runPS next)
-                Fail None rest -> runParseStep (runParser p2 k) rest
-                Fail Some rest -> Fail Some rest
+-- Concrete Parsers
+-------------------
 
+-- | Mark an unexpected end of input.
+{-# INLINE unexpectedEOI #-}
+unexpectedEOI :: String -> S.ByteString -> Signal a
+unexpectedEOI loc = Fail [loc ++ ": unexpected end of input"]
 
-try :: Parser a -> Parser a
-try p = 
-    Parser $ runP
-  where
-    runP k = ParseStep $ runPS id (runParseStep $ runParser p return)
-      where
-        runPS lbsC step bs = case step bs of
-          Result x rest -> runParseStep (k x) rest
-          Partial next  -> Partial $
-              ParseStep $ runPS (lbsC . L.chunk bs) (runParseStep next)
-          Fail _ _ -> Fail None (S.concat $ L.toChunks $ lbsC L.empty)
-
--- failing, bounded decode, fast/slow
-data BoundedDecode a = BoundedDecode 
-       Int 
-       (Parser a)
-      -- (Ptr Word8 -> IO (Maybe (a, Int)))
-
+-- | Parse an unsigned byte.
 word8 :: Parser Word8
 word8 = Parser $ parse
   where
@@ -149,10 +230,89 @@ word8 = Parser $ parse
       where
         step bs
           | S.null bs = Partial $ ParseStep $ \bs' ->
-              if S.null bs' then Fail None bs' else getWord8 bs'
+              if S.null bs' then unexpectedEOI "word8" bs' else getWord8 bs'
         step bs = getWord8 bs
 
         getWord8 bs = runParseStep (k (S.unsafeHead bs)) (S.unsafeTail bs)
+
+-- | Parses the whole remaining input as a lazy bytestring.
+lazyByteString :: Parser L.ByteString
+lazyByteString = Parser $ parse
+  where
+    parse k = ParseStep $ step0
+      where
+        step0 bs = Partial $ ParseStep $ step1 (L.chunk bs)
+        step1 lbsC bs
+          | S.null bs = runParseStep (k (lbsC L.empty)) bs
+          | otherwise = Partial $ ParseStep $ step1 (lbsC . L.chunk bs)
+
+-- | Run a parser. 
+runParser :: Parser a -> L.ByteString -> (Either [String] a, L.ByteString)
+runParser p = 
+    feed (unParser p return)
+  where
+    feed ps lbs0 = case runParseStep ps bs' of
+        Partial next -> feed next lbs' 
+        Result x bs  -> (Right x,   L.chunk bs lbs')
+        Fail errs bs -> (Left errs, L.chunk bs lbs')
+      where
+        (bs',lbs') = case lbs0 of
+          L.Empty        -> (S.empty, L.empty)
+          L.Chunk bs lbs -> (bs, lbs)
+
+------------------------------------------------------------------------------
+-- Benchmarks
+------------------------------------------------------------------------------
+
+-- | Size of test data.
+nRepl :: Int
+nRepl = 10
+
+{-# NOINLINE word8Data #-}
+word8Data :: L.ByteString
+word8Data = L.pack $ take nRepl $ cycle [0..]
+
+-- | Data to test the speed of parsing the naive binary list serialization 
+-- format: cons tagged with 1, nil tagged with 0.
+{-# NOINLINE binaryData #-}
+binaryData :: L.ByteString
+binaryData = L.pack $ 
+    (++ [0]) $ concatMap (\x -> [1,x]) $ take (nRepl `div` 2) $ cycle [0..]
+
+parseManyWord8s :: Parser [Word8]
+parseManyWord8s = many word8 
+
+parseNWord8s :: Parser [Word8]
+parseNWord8s = sequence $ replicate nRepl word8
+
+parseBinaryWord8s :: Parser [Word8]
+parseBinaryWord8s = do
+    tag <- word8
+    case tag of 
+      0 -> return []
+      1 -> (:) <$> word8 <*> parseBinaryWord8s
+      _ -> fail $ "parseBinaryWord8s: unknown tag " ++ show tag
+
+manyWord8sViaUnpack :: Parser [Word8]
+manyWord8sViaUnpack = L.unpack <$> lazyByteString
+
+test :: (Either [String] (Word8, Word8), L.ByteString)
+test = runParser ((,) <$> word8 <*> word8) (L.pack [0,1,2,3])
+
+test' :: String -> (Either [String] [Word8], L.ByteString)
+test' = 
+  runParser (many1 word8) . L.pack . (map (fromIntegral . ord))
+  -- runParser ((,) <$> word8 <*> word8) . L.pack . (map (fromIntegral . ord))
+
+many1 :: Alternative f => f a -> f [a]
+many1 f = (:) <$> f <*> many f
+
+{-
+-- failing, bounded decode, fast/slow
+data BoundedDecode a = BoundedDecode 
+       Int 
+       (Parser a)
+      -- (Ptr Word8 -> IO (Maybe (a, Int)))
 
 int16LE :: BoundedDecode Int32
 int16LE = BoundedDecode 4 
@@ -167,7 +327,7 @@ decode (BoundedDecode bound p io) =
     parse k = ParseStep step
       where
         step bs@(S.PS fpbuf off len)
-          | len < bound = runParseStep (runParser p k) bs
+          | len < bound = runParseStep (unParser p k) bs
           | otherwise   = case S.inlinePerformIO (io ip) of
               Nothing -> Fail None bs
               Just (x, i) -> 
@@ -258,13 +418,13 @@ plus p1 p2 =
     Parser run
   where
     run k = 
-        step (runParser p1 Result)
+        step (unParser p1 Result)
       where
         step ps bs = case sig of
             Result x bs'      -> k x bs'
             Partial None next -> Partial None (step next)
             Partial Some next -> Partial Some (next >>= k)
-            Fail None bs'     -> runParser p2 k bs'
+            Fail None bs'     -> unParser p2 k bs'
             Fail Some bs'     -> Fail Some bs'
           where
             sig = ps bs
@@ -413,4 +573,5 @@ readF (ReadF size io) =
         inRemaining = ipe `minusPtr` ip
 
         
+-}
 -}
