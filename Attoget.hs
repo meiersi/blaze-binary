@@ -3,7 +3,6 @@
 -- parsers.
 module Attoget where
 
-import           Data.Char (ord)
 import qualified Data.ByteString                 as S
 import qualified Data.ByteString.Unsafe          as S
 -- import qualified Data.ByteString.Internal        as S
@@ -13,9 +12,13 @@ import           Data.ByteString.Char8 ()
 
 import           Control.Applicative
 import           Control.Monad
--- import           Criterion.Main (defaultMain, nf, bench)
+import           Criterion.Main (defaultMain, nf, bench, bgroup)
 
 import           Foreign
+
+-- Imports benchmarking purposes
+import qualified Data.Attoparsec.ByteString.Lazy as A
+import qualified Data.Binary.Get                 as B
 
 -- Plan for a faster binary serialization format:
 --
@@ -34,14 +37,14 @@ import           Foreign
 
 -- | Signal of the parser to its driver.
 data Signal a = 
-         Result  a {-# UNPACK #-} !S.ByteString
+         Result  a S.ByteString
          -- ^ Result together with remaining input.
-       | Partial (ParseStep a)
-         -- ^ More input is required.
        | Fail [String] S.ByteString 
          -- ^ Failure, stack of error messages, and remaining input.
          -- Non-strict in the second argument to avoid redundant work in case
          -- of nested 'try's.
+       | Partial (ParseStep a)
+         -- ^ More input is required.
 
 -- | A parsing step. This is already a fully, fledged parsing monad. The
 -- only difference to the 'Parser' type is that it does not use CPS for
@@ -100,7 +103,7 @@ plus p1 p2 =
     runP k = 
         runPS 0 (unParser p1 return)
       where
-        runPS len0 ps = ParseStep $ \bs -> 
+        runPS !len0 ps = ParseStep $ \bs -> 
             case runParseStep ps bs of
                 Result x rest  -> runParseStep (k x) rest
                 Partial next   -> 
@@ -266,7 +269,7 @@ runParser p =
 
 -- | Size of test data.
 nRepl :: Int
-nRepl = 10
+nRepl = 10000
 
 {-# NOINLINE word8Data #-}
 word8Data :: L.ByteString
@@ -296,16 +299,75 @@ parseBinaryWord8s = do
 manyWord8sViaUnpack :: Parser [Word8]
 manyWord8sViaUnpack = L.unpack <$> lazyByteString
 
-test :: (Either [String] (Word8, Word8), L.ByteString)
-test = runParser ((,) <$> word8 <*> word8) (L.pack [0,1,2,3])
+-- Attoparsec
+-------------
 
-test' :: String -> (Either [String] [Word8], L.ByteString)
-test' = 
-  runParser (many1 word8) . L.pack . (map (fromIntegral . ord))
-  -- runParser ((,) <$> word8 <*> word8) . L.pack . (map (fromIntegral . ord))
+attoManyWord8s :: A.Parser [Word8]
+attoManyWord8s = many A.anyWord8 
 
-many1 :: Alternative f => f a -> f [a]
-many1 f = (:) <$> f <*> many f
+attoNWord8s :: A.Parser [Word8]
+attoNWord8s = sequence $ replicate nRepl A.anyWord8
+
+attoBinaryWord8s :: A.Parser [Word8]
+attoBinaryWord8s = do
+    tag <- A.anyWord8
+    case tag of 
+      0 -> return []
+      1 -> (:) <$> A.anyWord8 <*> attoBinaryWord8s
+      _ -> fail $ "attoBinaryWord8s: unknown tag " ++ show tag
+
+
+-- Binary Get
+-------------
+
+-- Does not work in the 'Get' monad, as it does not support error recovery.
+-- getManyWord8s :: B.Get [Word8]
+-- getManyWord8s = many B.getWord8 
+
+getNWord8s :: B.Get [Word8]
+getNWord8s = sequence $ replicate nRepl B.getWord8
+
+getBinaryWord8s :: B.Get [Word8]
+getBinaryWord8s = do
+    tag <- B.getWord8
+    case tag of 
+      0 -> return []
+      1 -> (:) <$> B.getWord8 <*> getBinaryWord8s
+      _ -> fail $ "getBinaryWord8s: unknown tag " ++ show tag
+
+
+-- Benchmarking main
+--------------------
+
+main :: IO ()
+main = defaultMain
+  [ bgroup "bytestring"
+      [ bench "unpack" $ nf L.unpack word8Data ]
+
+  , bgroup "binaryget"
+      [ benchGet "getNWord8s"         getNWord8s word8Data
+      , benchGet "getBinaryWord8s"    getBinaryWord8s binaryData
+      ]
+
+  , bgroup "attoget"
+      [ benchParse "parseManyWord8s"     parseManyWord8s word8Data
+      , benchParse "parseNWord8s"        parseNWord8s word8Data
+      , benchParse "parseBinaryWord8s"   parseBinaryWord8s binaryData
+      , benchParse "manyWord8sViaUnpack" manyWord8sViaUnpack word8Data 
+      ]
+
+  , bgroup "attoparsec"
+      [ benchAtto "attoManyWord8s"      attoManyWord8s word8Data
+      , benchAtto "attoNWord8s"         attoNWord8s word8Data
+      , benchAtto "attoBinaryWord8s"    attoBinaryWord8s binaryData
+      ]
+  ]
+  where
+    benchParse name p inp = bench name $ nf (fst . runParser p) inp
+
+    benchAtto name p inp = bench name $ nf (A.eitherResult . A.parse p) inp
+
+    benchGet name p inp = bench name $ nf (B.runGet p) inp
 
 {-
 -- failing, bounded decode, fast/slow
