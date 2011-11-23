@@ -1,4 +1,3 @@
 dist
-Attoget
-Attoget.hi
-Attoget.o
+*.hi
+*.o

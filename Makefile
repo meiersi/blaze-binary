@@ -25,6 +25,6 @@ GHCI = ghci-6.12.3
 
 # utf8 writing to a file
 bench-attoget:
-	$(GHC) --make -O2 -fforce-recomp -main-is Attoget Attoget.hs
-	./Attoget --resamples 10000
+	$(GHC) --make -O2 -fforce-recomp -main-is Benchmarks Benchmarks.hs
+	./Benchmarks --resamples 10000
 
