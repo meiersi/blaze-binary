@@ -13,6 +13,9 @@ import           Data.ByteString.Char8 ()
 import           Control.Applicative
 import           Control.Monad
 
+import qualified Data.Attoparsec.ByteString     as A
+import qualified Data.Attoparsec.Internal.Types as AT
+
 import           Foreign
 
 
@@ -24,7 +27,7 @@ import           Foreign
 data Signal a = 
          Result  a S.ByteString
          -- ^ Result together with remaining input.
-       | Fail [String] S.ByteString 
+       | Fail String S.ByteString 
          -- ^ Failure, stack of error messages, and remaining input.
          -- Non-strict in the second argument to avoid redundant work in case
          -- of nested 'try's.
@@ -48,7 +51,7 @@ plus_ps ps1 ps2 =
     ParseStep $ runPS 0 ps1
   where
     runPS len0 ps bs = case runParseStep ps bs of
-        Fail _errs rest 
+        Fail _err rest 
           | S.length rest == len -> runParseStep ps2 rest
         Partial next             -> Partial (ParseStep $ runPS len next)
         signal                   -> signal
@@ -68,8 +71,8 @@ try_ps ps =
         -- Otherwise, nested 'try's would perform redundant work, as only the
         -- stored input of the outermost 'try' will be used for the next
         -- parser.
-        Fail errs _ -> 
-           Fail ("try" : errs) (S.concat $ L.toChunks $ lbsC L.empty)
+        Fail err _ -> 
+           Fail err (S.concat $ L.toChunks $ lbsC L.empty)
 
 
 -- Instances
@@ -79,7 +82,7 @@ instance Functor Signal where
   {-# INLINE fmap #-}
   fmap f (Result x inp)  = Result (f x) inp
   fmap f (Partial next)  = Partial (fmap f next)
-  fmap _ (Fail errs inp) = Fail errs inp
+  fmap _ (Fail err inp) = Fail err inp
 
 
 instance Functor ParseStep where
@@ -108,17 +111,17 @@ instance Monad ParseStep where
                   case runParseStep m bs of
                       Result x rest  -> runParseStep (f x) rest
                       Partial next   -> Partial (next >>= f)
-                      Fail errs rest -> Fail errs rest
+                      Fail err rest -> Fail err rest
 
   {-# INLINE (>>) #-}
   m >> m'   = ParseStep $ \bs -> 
                   case runParseStep m bs of
                       Result _ rest  -> runParseStep m' rest
                       Partial next   -> Partial (next >> m')
-                      Fail errs rest -> Fail errs rest
+                      Fail err rest -> Fail err rest
 
   {-# INLINE fail #-}
-  fail msg = ParseStep $ Fail [msg]
+  fail msg = ParseStep $ Fail msg
 
 instance MonadPlus ParseStep where
   {-# INLINE mzero #-}
@@ -154,10 +157,10 @@ plus p1 p2 =
                 Result x rest  -> runParseStep (k x) rest
                 Partial next   -> 
                   let !len = len0 + S.length bs in Partial (runPS len next)
-                Fail errs rest 
+                Fail err rest 
                   | S.length rest == len0 + S.length bs ->
                       runParseStep (unParser p2 k) rest
-                  | otherwise -> Fail errs rest
+                  | otherwise -> Fail err rest
 
 -- | Parsec's 'try' operator for 'Parser'.
 try :: Parser a -> Parser a
@@ -170,8 +173,8 @@ try p =
           Result x rest -> runParseStep (k x) rest
           Partial next  -> Partial $
               ParseStep $ runPS (lbsC . L.chunk bs) (runParseStep next)
-          Fail errs _ -> 
-              Fail ("try" : errs) (S.concat $ L.toChunks $ lbsC L.empty)
+          Fail err _ -> 
+              Fail err (S.concat $ L.toChunks $ lbsC L.empty)
 
 
 
@@ -214,7 +217,7 @@ instance Monad Parser where
 -- | Mark an unexpected end of input.
 {-# INLINE unexpectedEOI #-}
 unexpectedEOI :: String -> S.ByteString -> Signal a
-unexpectedEOI loc = Fail [loc ++ ": unexpected end of input"]
+unexpectedEOI loc = Fail $ loc ++ ": unexpected end of input"
 
 -- | Parse an unsigned byte.
 word8 :: Parser Word8
@@ -241,16 +244,38 @@ lazyByteString = Parser $ parse
           | otherwise = Partial $ ParseStep $ step1 (lbsC . L.chunk bs)
 
 -- | Run a parser. 
-runParser :: Parser a -> L.ByteString -> (Either [String] a, L.ByteString)
+runParser :: Parser a -> L.ByteString -> (Either String a, L.ByteString)
 runParser p = 
     feed (unParser p return)
   where
     feed ps lbs0 = case runParseStep ps bs' of
         Partial next -> feed next lbs' 
         Result x bs  -> (Right x,   L.chunk bs lbs')
-        Fail errs bs -> (Left errs, L.chunk bs lbs')
+        Fail err bs -> (Left err, L.chunk bs lbs')
       where
         (bs',lbs') = case lbs0 of
           L.Empty        -> (S.empty, L.empty)
           L.Chunk bs lbs -> (bs, lbs)
+
+
+toAttoparsec :: Parser a -> A.Parser a
+toAttoparsec p = 
+    feed (unParser p return)
+  where
+    feed ps = do
+        bs <- get
+        case runParseStep ps bs of
+            Partial next -> do feed next
+            Result x bs' -> do put bs'
+                               return x
+            Fail err bs' -> do put bs'
+                               fail err
+
+    -- 'get' and 'put' from the source of Data.Attoparsec.ByteString
+    get   = AT.Parser $ \i0  a0 m0 _kf ks -> ks i0 a0 m0 (AT.unI i0)
+    put s = AT.Parser $ \_i0 a0 m0 _kf ks -> ks (AT.I s) a0 m0 ()
+
+
+
+
 
