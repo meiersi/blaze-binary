@@ -2,19 +2,152 @@
 -- | Decoding of bounded values.
 module Attoget.BoundedDecode where
 
+import qualified Data.ByteString                 as S
+import qualified Data.ByteString.Unsafe          as S
+import qualified Data.ByteString.Internal        as S
 import qualified Data.ByteString.Lazy            as L
+import qualified Data.ByteString.Lazy.Internal   as L
 import           Data.ByteString.Char8 () 
 
 import           Control.Applicative
-import           Criterion.Main (defaultMain, nf, bench, bgroup)
 
 import           Foreign
 
 import           Attoget.Hybrid
 
--- Imports benchmarking purposes
-import qualified Data.Attoparsec.ByteString.Lazy as A
-import qualified Data.Binary.Get                 as B
+
+
+data FD a = FD { fdSize :: {-# UNPACK #-} !Int,  fdIO :: (Ptr Word8 -> IO a) }
+
+instance Functor FD where
+  fmap f (FD s io) = FD s (fmap (fmap f) io)
+
+instance Applicative FD where
+  pure x  = FD 0 (const $ return x)
+
+  FD fs fio <*> FD xs xio = 
+      FD (fs + xs) (\ip -> fio ip <*> xio (ip `plusPtr` fs))
+
+{-
+-- | Try to ensure that at least 'n' bytes are available and
+-- return the currently available chunks.
+ensureLazy :: Int -> Parser L.ByteString
+ensureLazy n0 = Parser parse 
+  where
+    parse k = ParseStep $ step id n0
+      where
+        step lbsC n bs
+          | S.null bs        = runParseStep (k (lbsC L.empty)) S.empty
+          | n <= S.length bs = runParseStep (k (lbsC L.empty)) bs
+-}
+-- | Smart constructor for a partial parse.
+partial :: (S.ByteString -> Signal a) -> Signal a
+partial = Partial . ParseStep
+
+-- | Strictification of a lazy bytestring.
+toStrict :: L.ByteString -> S.ByteString
+toStrict L.Empty             = S.empty
+toStrict (L.Chunk c L.Empty) = c
+toStrict cs0 = S.unsafeCreate totalLen $ \ptr -> go cs0 ptr
+  where
+    totalLen = L.foldlChunks (\a c -> a + S.length c) 0 cs0
+
+    go L.Empty                        !_       = return ()
+    go (L.Chunk (S.PS fp off len) cs) !destptr =
+      withForeignPtr fp $ \p -> do
+        copyBytes destptr (p `plusPtr` off) len
+        go cs (destptr `plusPtr` len)
+
+-- | Take a bytestring of the given length. Fails if not enough bytes
+-- are available.
+takeByteString :: Int -> Parser S.ByteString
+takeByteString n0 
+    | n0 <= 0   = return S.empty
+    | otherwise = Parser parse
+  where
+    parse k = ParseStep $ step0 
+      where
+        step0 bs
+          | n0 <= len = -- common case. progress ensured, as n0 > 0
+              runParseStep (k (S.unsafeTake n0 bs)) (S.unsafeDrop n0 bs)
+          | otherwise = partial $ step1 (L.chunk bs) (n0 - len)
+          where
+            len = S.length bs
+
+        -- an empty bytestring means EOI
+        step1 lbsC !n bs
+          | S.null bs = Fail "takeByteString: unexpected EOI" bs
+          | len < n   = partial $ step1 lbsC' (n - len)
+          | otherwise = case L.splitAt (fromIntegral n0) $ lbsC' L.empty of
+              (pre, post) -> runParseStep (k (toStrict pre)) (toStrict post)
+          where
+            lbsC' = lbsC . L.Chunk bs
+            len   = S.length bs
+
+
+-- | Decode with a fixed decoding.
+decodeWithFD :: FD a -> Parser a
+decodeWithFD fd =
+    Parser $ parse
+  where
+    s = fdSize fd
+
+    parse k = ParseStep step
+      where
+        step bs
+          | s <= S.length bs = 
+              runParseStep (k (evalFD fd bs)) (S.unsafeDrop s bs)
+          | otherwise        = 
+              runParseStep (unParser (evalFD fd <$> takeByteString s) k) bs
+
+{-
+-- | Decode the rest of the input with the given fixed decoding. There may be
+-- left-over input smaller than the fixed decoding.
+decodeListWithFD :: FD a -> Parser [a]
+decodeListWithFD fd =
+    Parser $ parse
+  where
+    s = fdSize fd
+
+    parse k = ParseStep $ step0 id
+      where
+        step0 bs
+          | S.null bs = partial $ step1 id
+          | otherwise = step1 id bs
+
+        step1 xsC bs
+          | s <= S.length bs = 
+              runParseStep (k (evalFD fd bs)) (S.unsafeDrop s bs)
+          | otherwise        = 
+              runParseStep (unParser (evalFD fd <$> takeByteString s) k) bs
+-}
+
+{-
+eof :: Parser ()
+eof = Parser $ \k -> ParseStep $ 
+
+unpackWithFD :: FD a -> L.ByteString -> Maybe [a]
+unpackWithFD fd lbs = case runParser (decodeListWithFD fd >> eof) lbs of
+    Left _  -> Nothing
+    Right x -> Just x
+-}
+
+word8FD :: FD Word8
+word8FD = FD 1 peek
+
+word16BE :: FD Word16
+word16BE = 
+    (\w1 w2 -> fromIntegral w1 `shiftL` 8 .|. fromIntegral w2) 
+    <$> word8FD <*> word8FD
+
+{-# INLINE evalFD #-}
+evalFD :: FD a -> S.ByteString -> a
+evalFD fd (S.PS fp off _) = 
+    S.inlinePerformIO $ withForeignPtr fp $ \p -> fdIO fd (p `plusPtr` off)
+
+{-
+
+
 
 -- Plan for a faster binary serialization format:
 --
