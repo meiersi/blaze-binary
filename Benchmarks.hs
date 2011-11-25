@@ -12,6 +12,7 @@ import           Criterion.Main (defaultMain, nf, bench, bgroup)
 import           Foreign
 
 import           Attoget.Hybrid
+import           Attoget.AttoDecode (word8Rest, word16BERest)
 
 -- Imports benchmarking purposes
 import qualified Data.Attoparsec.ByteString.Lazy as A
@@ -242,7 +243,11 @@ main = defaultMain
       , benchParse     manyWord8sViaUnpack word8Data 
       , benchParse     parseManyWord8s word8Data
       , benchAtto      attoManyWord8s word8Data
+      , benchAtto' "attodecode" word8Rest    word8Data
       ]
+
+  , bgroup "manyWord16BEs"
+      [ benchAtto' "attodecode" word16BERest word8Data ]
 
     -- Here we measure the time for parsing the tagged list format used by
     -- Data.Binary for 'nRepl' words. Compare this to the time for just
