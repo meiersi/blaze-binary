@@ -1,0 +1,252 @@
+Benchmarks to support design decisions for a new binary serialization format
+============================================================================
+
+Author: Simon Meier <iridcode@gmail.com>
+Date:   2011/11/28
+
+
+1. Building and running the bencmarks
+-------------------------------------
+
+The benchmarks executable is cabalized. It should be built using cabal-dev.
+Use
+
+  cabal-dev add-sources lib/attoparsec-1.10.0.2/
+
+to incorporate the patched version of attoparsec. This version is a copy of
+attoparsec-0.10.0.2 that also exposes all internal modules. Call
+
+  cabal-dev install
+  ./cabal-dev/bin/bench-attoget
+
+to run the benchmarks.
+
+
+2. Benchmarking different binary parser designs
+-----------------------------------------------
+
+The benchmarks given an answer to the following questions:
+
+Q1. What is the overhead introduced by attoparsec by supporting CPS for
+    backtracking (recovering from failures).
+
+Q2. What is the overhead introduced by supporting partial parses.
+
+Q3. How much performance can we gain from exploiting bounded-size decodings?
+
+Q4. How much performance can we gain from exploiting fixed-size encodings?
+
+Appendix A lists the results for the benchmarks obtained using GHC 7.0.3 on an
+i7-2620M CPU @ 2.70GHz running a 64-bit Linux. Here, we discuss the answers to
+the above four questions that the benchmarks imply on this particular
+platform.
+
+A1: I have implemented a parser type that supports only a success continuation
+and reduces the amount of data passed around to a minimum. It is called
+'attoget' in the benchmarks. If we compare, 'binaryWord8s/attoget' against
+'binaryWord8s/attoparsec', then we see that passing around the failure
+continuation some additional parsing status costs attoparsec about 30% of
+speed. The 'binaryWord8's benchmark measures the deserialization of the format
+used by the current binary library to serialize [Word8].
+
+A2: By comparing 'attoget' with the 'Get' monad of the 'binary' package,
+reffered to as 'binaryget' in the benchmarks, we see that partial parses incur
+a 30% slowdown for code that GHC can optimize. (binaryWord8s/binaryget vs.
+binrayWord8s/attoget). This is probably due to the fact that parsers
+supporting partial parses become recursive functions, which are harder to
+optimize for GHC. Comparing versions of parsing the binary data with a Word8
+parser that is not inlined we see that attoget becomes faster than binaryget.
+The reason is probably that using CPS is faster than pattern matching.
+
+A3: Bounded-size decodings will never consume more than a fixed amount of
+input. They are the dual of bounded-size encodings. In general, they are
+applicable for bounded Haskell values. My benchmarks are not yet complete, but
+clearly show that there is a lot to gain from dealing with bounded-size
+decoding explicitly. I have measured the time it takes to unpack a [Word8]
+list using a bounded-decoding for Word8. See the 'manyWord8s/attodecode ->'
+benchmarks. The unprimed version of the benchmark uses a difference list for
+constructing the result, while the primed version uses an explicit final
+reverse. The unpacking speed with the bounded decoding is 1.6 times the speed
+of unpacking a lazy bytestring of the same length. The slowdown results from
+the list reversal. It is a factor 3 faster than decoding the tagged binary
+format using inlined binaryget. ('binaryWord8s (full length)/binaryget).
+
+A4: Fixed-size enocdings always consume a fixed amout of input. For fixed-size
+decodings, we can unpck a lazy bytestring more quickly because we can do it
+backwards. This avoids one list reversal, which yields a factor 1.6 speedup.
+Compare the 'attodecoe ->' against the 'attodecode <-' benchmarks.
+
+
+3. Consequences for a new binary serialization format
+-----------------------------------------------------
+
+Supporting partial parses comes at the cost of worse optimization by GHC, as
+every parser becomes recursive. Moreover, every point where a partial parse
+could be returned incurs some runtime overhead. Hence, the primary means to
+achieve better performance than the existing binary parser is to
+remove/simplify yield points for partial parses. There are two principles that
+allow us to do that.
+
+  1. We should parse bounded values in one go: First check that there is
+  enough data available, if not return a partial parse. For parsing the last
+  few bytes we have to allocate a new padded buffer and check in case of a
+  successful parse, that none of the padding bytes have been used. Note that
+  bounded values include discrimitive unions built from bounded values only;
+  e.g, 'Maybe Int'.
+
+  We can achieve this by providing a type for bounded-decodings. This types
+  primary interface is Applicative. A user has to be careful to allow all
+  definitions to be inlined at compile time. This implies that bounded-size
+  deocdings are part of an expert interface. For a default binary
+  serialization format the full inlining should not be too hard to guarantee,
+  as we provide all definitions of bounded decodings.
+
+  2. We should use a chunked encoding for lists of bounded values; i.e., 
+  Prefix each chunk with its size and terminate the sequence with a chunk of
+  size zero. Parsing is greatly simplified, as it corresponds to extracting
+  a lazy bytestring of chunks from the input and then 'unpacking' this
+  bytestring using a bounded decoding. The benchmarks show that this
+  leads to a factor 3 (factor 6 four fixed-size decodings) increase in parsing
+  speed. This is not surprising as the problem is nicely factored and the
+  number of active variables in the inner loop is significantly reduced.
+
+  I have also developed the 'chunkedEncoding' builder transformer in the new
+  bytestring builder. This builder transformer takes an arbitary builder and
+  wraps it such that before the inner builder's buffer filling space is
+  reserved for encoding the final chunk size. The buffer full signal of the
+  inner builder is intercepted and used to write the actual chunk size in a
+  padded form. This way no intermediate buffers are required. This comes at
+  the cost of a slight memory spilling for padding the chunk size such that it
+  fills the reserved space. However, we reduce the spilling to at most 2 bytes
+  per chunk, when using the variable length (base-128) integer encoding used
+  in Google's protocol buffer format to encode chunk sizes; provided our
+  buffer sizes are smaller than (2 ^ 21). The encoding speed is almost as good
+  as the one of the inner builder, as only the buffer full signal handling is
+  slighlty more expensive.
+
+A further option to increase the parsing speed for zero-lookahead parsing (our
+use case for binary serialzation) is to drop the failure continuation from the
+parser type. This leads to a 30% speedup for binary parsing as demonstrated 
+above. Morover, the 'attoparsec-get' benchmarks show that running an 'attoget'
+parser inside an 'attoparsec' parser has only a very small overhead. This
+opens up one implementation route that uses a special parser like attoget to
+parse binary data, but still allows to use the general attoparsec
+infrastructure for wrapping it; e.g., the conversions to enumerators or
+iteratees.
+
+
+A. Benchmarking results
+-----------------------
+
+The following results were obtained using GHC 7.0.3 on an i7-2620M CPU @
+2.70GHz running a 64-bit Linux.
+
+benchmarking manyWord8s/unpack
+mean: 200.2095 us, lb 199.2190 us, ub 201.2905 us, ci 0.950
+std dev: 5.290010 us, lb 4.544174 us, ub 6.521448 us, ci 0.950
+
+benchmarking manyWord8s/attoget (via-unpack)
+mean: 201.3205 us, lb 200.2651 us, ub 202.8708 us, ci 0.950
+std dev: 6.467065 us, lb 4.783060 us, ub 10.72677 us, ci 0.950
+
+benchmarking manyWord8s/attoget
+mean: 4.119342 ms, lb 4.071389 ms, ub 4.243921 ms, ci 0.950
+std dev: 367.7837 us, lb 157.9061 us, ub 763.6986 us, ci 0.950
+
+benchmarking manyWord8s/attoparsec
+mean: 1.443113 ms, lb 1.430989 ms, ub 1.455039 ms, ci 0.950
+std dev: 61.51274 us, lb 55.03648 us, ub 70.17522 us, ci 0.950
+
+benchmarking manyWord8s/attodecode ->
+mean: 369.8548 us, lb 367.8895 us, ub 372.5770 us, ci 0.950
+std dev: 11.84918 us, lb 9.008345 us, ub 17.21341 us, ci 0.950
+
+benchmarking manyWord8s/attodecode ->'
+mean: 357.2954 us, lb 355.5028 us, ub 359.4618 us, ci 0.950
+std dev: 10.08226 us, lb 8.444917 us, ub 14.40247 us, ci 0.950
+
+benchmarking manyWord8s/attodecode <-
+mean: 202.4135 us, lb 201.2395 us, ub 203.7995 us, ci 0.950
+std dev: 6.518843 us, lb 5.442291 us, ub 8.218297 us, ci 0.950
+
+benchmarking manyWord8s/attodecode <-'
+mean: 204.5836 us, lb 203.1518 us, ub 206.4551 us, ci 0.950
+std dev: 8.303652 us, lb 6.600460 us, ub 12.68264 us, ci 0.950
+
+benchmarking manyWord16BEs/attodecode ->
+mean: 128.9527 us, lb 128.3791 us, ub 129.7885 us, ci 0.950
+std dev: 3.508408 us, lb 2.623879 us, ub 5.461560 us, ci 0.950
+
+benchmarking manyWord16BEs/attodecode ->'
+mean: 128.5092 us, lb 127.9442 us, ub 129.5906 us, ci 0.950
+std dev: 3.861895 us, lb 2.386721 us, ub 6.679218 us, ci 0.950
+
+benchmarking manyWord16BEs/attodecode <-
+mean: 79.82457 us, lb 79.41697 us, ub 80.29377 us, ci 0.950
+std dev: 2.220736 us, lb 1.821274 us, ub 3.021404 us, ci 0.950
+
+benchmarking manyWord16BEs/attodecode <-'
+mean: 79.44715 us, lb 78.86831 us, ub 80.33550 us, ci 0.950
+std dev: 3.644185 us, lb 2.573729 us, ub 5.351786 us, ci 0.950
+
+benchmarking binaryWord8s (full length)/binaryget
+mean: 1.341570 ms, lb 1.336269 ms, ub 1.348407 ms, ci 0.950
+std dev: 30.69770 us, lb 23.98310 us, ub 40.93705 us, ci 0.950
+
+benchmarking binaryWord8s (full length)/attoget
+mean: 1.512426 ms, lb 1.503232 ms, ub 1.524200 ms, ci 0.950
+std dev: 52.97095 us, lb 42.85043 us, ub 75.02109 us, ci 0.950
+
+benchmarking binaryWord8s (full length)/attoparsec
+mean: 2.020433 ms, lb 1.993715 ms, ub 2.048181 ms, ci 0.950
+std dev: 139.4545 us, lb 119.7941 us, ub 165.5873 us, ci 0.950
+
+benchmarking binaryWord8s (full length)/attoparsec-get
+mean: 1.509635 ms, lb 1.500646 ms, ub 1.520773 ms, ci 0.950
+std dev: 51.09112 us, lb 40.83852 us, ub 70.35298 us, ci 0.950
+
+benchmarking binaryWord8s/binaryget
+mean: 513.8795 us, lb 511.3070 us, ub 517.6782 us, ci 0.950
+std dev: 15.82168 us, lb 10.93090 us, ub 23.75438 us, ci 0.950
+
+benchmarking binaryWord8s/attoget
+mean: 686.0703 us, lb 681.4126 us, ub 692.2384 us, ci 0.950
+std dev: 27.27169 us, lb 21.25330 us, ub 37.45487 us, ci 0.950
+
+benchmarking binaryWord8s/attoparsec
+mean: 922.8435 us, lb 917.1743 us, ub 929.0260 us, ci 0.950
+std dev: 30.19128 us, lb 26.81933 us, ub 35.02458 us, ci 0.950
+
+benchmarking binaryWord8s/attoparsec-get
+mean: 674.6288 us, lb 671.4634 us, ub 677.8454 us, ci 0.950
+std dev: 16.34870 us, lb 14.44054 us, ub 19.45414 us, ci 0.950
+
+benchmarking binaryWord8s NOINLINE/binaryget
+mean: 761.2966 us, lb 757.6751 us, ub 765.4272 us, ci 0.950
+std dev: 19.86998 us, lb 17.14268 us, ub 24.02835 us, ci 0.950
+
+benchmarking binaryWord8s NOINLINE/attoget
+mean: 729.3977 us, lb 725.2918 us, ub 734.2728 us, ci 0.950
+std dev: 22.77857 us, lb 18.77683 us, ub 28.24550 us, ci 0.950
+
+benchmarking binaryWord8s NOINLINE/attoparsec
+mean: 940.1387 us, lb 933.3625 us, ub 947.7749 us, ci 0.950
+std dev: 36.88360 us, lb 32.13311 us, ub 44.50115 us, ci 0.950
+
+benchmarking binaryWord8s NOINLINE/attoparsec-get
+mean: 724.0783 us, lb 720.6436 us, ub 727.7955 us, ci 0.950
+std dev: 18.36457 us, lb 15.70667 us, ub 22.12542 us, ci 0.950
+
+benchmarking replicateNWord8s/binaryget
+mean: 1.227668 ms, lb 1.216583 ms, ub 1.245062 ms, ci 0.950
+std dev: 69.76730 us, lb 50.22945 us, ub 115.6634 us, ci 0.950
+
+benchmarking replicateNWord8s/attoget
+mean: 1.407122 ms, lb 1.393126 ms, ub 1.422449 ms, ci 0.950
+std dev: 75.01078 us, lb 65.75206 us, ub 87.55244 us, ci 0.950
+
+benchmarking replicateNWord8s/attoparsec
+mean: 2.062740 ms, lb 2.042771 ms, ub 2.083642 ms, ci 0.950
+std dev: 104.4908 us, lb 89.72152 us, ub 128.3954 us, ci 0.950
+
+
