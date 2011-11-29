@@ -47,6 +47,7 @@ executable bench-attoget
     
     -- Other library packages from which modules are imported.
     -- type: exitcode-stdio-1.0
+    hs-source-dirs: src
     main-is: Benchmarks.hs
     build-depends:       
         base == 4.*
