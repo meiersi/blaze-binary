@@ -13,7 +13,7 @@ Use
 
   cabal-dev add-sources lib/attoparsec-1.10.0.2/
 
-to incorporate the patched version of attoparsec. This version is a copy of
+to incorporate the patched version of attoparsec, which is a copy of
 attoparsec-0.10.0.2 that also exposes all internal modules. Call
 
   cabal-dev install
@@ -25,7 +25,7 @@ to run the benchmarks.
 2. Benchmarking different binary parser designs
 -----------------------------------------------
 
-The benchmarks given an answer to the following questions:
+The benchmarks help answering the following questions:
 
 Q1. What is the overhead introduced by attoparsec by supporting CPS for
     backtracking (recovering from failures).
@@ -45,31 +45,33 @@ A1: I have implemented a parser type that supports only a success continuation
 and reduces the amount of data passed around to a minimum. It is called
 'attoget' in the benchmarks. If we compare, 'binaryWord8s/attoget' against
 'binaryWord8s/attoparsec', then we see that passing around the failure
-continuation some additional parsing status costs attoparsec about 30% of
+continuation and some additional parsing status costs attoparsec about 30% of
 speed. The 'binaryWord8's benchmark measures the deserialization of the format
 used by the current binary library to serialize [Word8].
 
 A2: By comparing 'attoget' with the 'Get' monad of the 'binary' package,
-reffered to as 'binaryget' in the benchmarks, we see that partial parses incur
+referred to as 'binaryget' in the benchmarks, we see that partial parses incur
 a 30% slowdown for code that GHC can optimize. (binaryWord8s/binaryget vs.
 binrayWord8s/attoget). This is probably due to the fact that parsers
 supporting partial parses become recursive functions, which are harder to
 optimize for GHC. Comparing versions of parsing the binary data with a Word8
-parser that is not inlined we see that attoget becomes faster than binaryget.
-The reason is probably that using CPS is faster than pattern matching.
+parser that is *not* inlined we see that 'attoget' becomes faster than
+'binaryget'. The reason is probably that using CPS is faster than pattern
+matching.
 
-A3: Bounded-size decodings will never consume more than a fixed amount of
-input. They are the dual of bounded-size encodings. In general, they are
-applicable for bounded Haskell values. My benchmarks are not yet complete, but
-clearly show that there is a lot to gain from dealing with bounded-size
-decoding explicitly. I have measured the time it takes to unpack a [Word8]
-list using a bounded-decoding for Word8. See the 'manyWord8s/attodecode ->'
-benchmarks. The unprimed version of the benchmark uses a difference list for
-constructing the result, while the primed version uses an explicit final
-reverse. The unpacking speed with the bounded decoding is 1.6 times the speed
-of unpacking a lazy bytestring of the same length. The slowdown results from
-the list reversal. It is a factor 3 faster than decoding the tagged binary
-format using inlined binaryget. ('binaryWord8s (full length)/binaryget).
+A3: Bounded-size decodings never consume more than a fixed amount of input.
+They are the dual of bounded-size encodings. In general, they are applicable
+for parsing bounded Haskell values. My benchmarks are not yet complete, but
+clearly show that there is a lot to gain from expressing bounded-size decoding
+explicitly. I have measured the time it takes to unpack a [Word8] list using a
+bounded-decoding for Word8. See the 'manyWord8s/attodecode ->' benchmarks. The
+unprimed version of the benchmark uses a difference list for constructing the
+result, while the primed version uses an explicit final reverse. The unpacking
+speed with the bounded decoding is 1.6 times the speed of unpacking a lazy
+bytestring of the same length. The slowdown results from the list reversal.
+The important point is however that parsing with the bounded-decoding is a
+factor 3 faster than parsing the tagged binary format using inlined binaryget.
+('binaryWord8s (full length)/binaryget).
 
 A4: Fixed-size enocdings always consume a fixed amout of input. For fixed-size
 decodings, we can unpck a lazy bytestring more quickly because we can do it
@@ -94,45 +96,51 @@ allow us to do that.
   bounded values include discrimitive unions built from bounded values only;
   e.g, 'Maybe Int'.
 
-  We can achieve this by providing a type for bounded-decodings. This types
-  primary interface is Applicative. A user has to be careful to allow all
-  definitions to be inlined at compile time. This implies that bounded-size
-  deocdings are part of an expert interface. For a default binary
-  serialization format the full inlining should not be too hard to guarantee,
+  We can achieve this by providing a type for bounded-decodings. This type's
+  primary interface is the 'Applicative' type class. A user has to be careful
+  to allow all definitions to be inlined at compile time. This implies that
+  bounded-size deocdings are part of an expert interface. For a default binary
+  serialization format, the full inlining should not be too hard to guarantee,
   as we provide all definitions of bounded decodings.
 
   2. We should use a chunked encoding for lists of bounded values; i.e., 
-  Prefix each chunk with its size and terminate the sequence with a chunk of
-  size zero. Parsing is greatly simplified, as it corresponds to extracting
-  a lazy bytestring of chunks from the input and then 'unpacking' this
-  bytestring using a bounded decoding. The benchmarks show that this
-  leads to a factor 3 (factor 6 four fixed-size decodings) increase in parsing
-  speed. This is not surprising as the problem is nicely factored and the
-  number of active variables in the inner loop is significantly reduced.
+  an encoding that prefixes each chunk with its size and terminates the
+  sequence of chunk of size zero. Parsing is greatly simplified, as it
+  corresponds to extracting a lazy bytestring of chunks from the input and
+  then 'unpacking' this bytestring using a bounded decoding. The benchmarks
+  show that this leads to a factor 3 (factor 6 four fixed-size decodings)
+  increase in parsing speed. This is not surprising as the problem is nicely
+  factored and the number of active variables in the inner loop is
+  significantly reduced.
 
   I have also developed the 'chunkedEncoding' builder transformer in the new
   bytestring builder. This builder transformer takes an arbitary builder and
-  wraps it such that before the inner builder's buffer filling space is
-  reserved for encoding the final chunk size. The buffer full signal of the
-  inner builder is intercepted and used to write the actual chunk size in a
-  padded form. This way no intermediate buffers are required. This comes at
+  wraps it such that space is reserved for encoding the final chunk size
+  before the given builder starts filling a buffer. The buffer full signal of
+  the given builder is intercepted and used to write the actual chunk size in
+  a padded form. This way no intermediate buffers are required. This comes at
   the cost of a slight memory spilling for padding the chunk size such that it
-  fills the reserved space. However, we reduce the spilling to at most 2 bytes
-  per chunk, when using the variable length (base-128) integer encoding used
-  in Google's protocol buffer format to encode chunk sizes; provided our
-  buffer sizes are smaller than (2 ^ 21). The encoding speed is almost as good
-  as the one of the inner builder, as only the buffer full signal handling is
-  slighlty more expensive.
+  fills the reserved space. However, we can reduce the spilling to at most 2
+  bytes per chunk, when using the variable length (base-128) integer encoding
+  used in Google's protocol buffer format to encode chunk sizes; provided our
+  buffer sizes are smaller than 2 ^ 21 bytes, which is the case for 32kb
+  buffers. The encoding speed is almost as good as the one of the given
+  builder, as only the buffer full signal handling is slightly more expensive.
 
 A further option to increase the parsing speed for zero-lookahead parsing (our
 use case for binary serialzation) is to drop the failure continuation from the
-parser type. This leads to a 30% speedup for binary parsing as demonstrated 
+parser type. This leads to a 30% speedup for binary parsing as demonstrated
 above. Morover, the 'attoparsec-get' benchmarks show that running an 'attoget'
 parser inside an 'attoparsec' parser has only a very small overhead. This
-opens up one implementation route that uses a special parser like attoget to
+opens up an implementation route that uses a special parser like attoget to
 parse binary data, but still allows to use the general attoparsec
 infrastructure for wrapping it; e.g., the conversions to enumerators or
 iteratees.
+
+Note that these benchmarks just give a first overview over the problem.
+Finding the right API is still a hard problem. Moreover, the benchmarks should
+be extended to check how much speed can be gained from exploiting bounded-size
+decodings for decoding single values instead of lists of values.
 
 
 A. Benchmarking results
