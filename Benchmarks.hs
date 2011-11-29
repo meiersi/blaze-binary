@@ -12,103 +12,12 @@ import           Criterion.Main (defaultMain, nf, bench, bgroup)
 import           Foreign
 
 import           Attoget.Hybrid
-import           Attoget.AttoDecode (word8Rest, word16BERest)
+import           Attoget.AttoDecode 
 
 -- Imports benchmarking purposes
 import qualified Data.Attoparsec.ByteString.Lazy as A
 import qualified Data.Binary.Get                 as B
 
-{- 
-Lately, I was thinking about how to improve the speed of the 'binary'
-serialization library. There are two main improvement vectors.
-
-1. We can improve the datastructures/abstractions used to encode and decode
-   binary data.
-
-2. We can change the serialization format to allow for faster encoding and
-   decoding.
-
-Note that the improvements may come at the cost of compatibility with the
-existing API. If it warrants significant speed improvments, then that is fine
-in my opinion.
-
-In earlier posts, I focused on the lazy bytestring 'Builder' abstraction,
-which allows to implement efficient encodings, i.e., functions mapping Haskell
-values to sequences of bytes. The blaze-builder library provided an early
-prototype of a lazy bytestring builder. Recently, I have completed a
-significant rewrite of it, which will be available in the next release of the
-bytestring library.
-
-In this post, I provide benchmark results that allow a more informed choice for
-the design and implementation of the decoding side of a 'binary' serialization
-library. The baseline is provided by the parser implemented in the 'Get' monad
-of the current 'binary-0.5.0.2' library, which is called 'binaryget' in the
-following benchmarks. This parser is a simple state monad over the input
-represented as a lazy bytestring. It does not support failure recovery. An
-obvious competition is the bytestring parser provided by the 'attoparsec' libary.
-It is implemented using continuation-passing-style (CPS) and supports 
-failure recovery and partial parses (enumerator style parsing). 
-
-Note that failure recovery is not required to parse a binary serialization
-format. 
-
-Note that we have full control over our binary encoding format.  and therefore
-we can avoid
-
-failur recovery is not required to parse a serializad Haskell value.
-
-Common sense
-says that su
-
-based parserdoes not support failure recovery
-
-
-
-of the situation for 
-
-show a few benchmark results that 
-
-Recently, amy work on a lazy bytestring builder 
-.
-
-With my work on the blaze-builder library, which is now integrated in the
-bytestring repository
-
-
-Its primary goal
-is to improve encoding (serialization) and decoding (deserialization) speed.
-Where possible, it should retain this 
-
-The design goals for a serialization format are obviously maximal speed for
-both encoding and decoding. For encoding, 
-
-Design goals: speed and low latency.
-
-
-Design proposal for a new binary serialization format:
-
-1. Use a parser design (similar to attoparsec) that supports partial parses.
-   Use only a 
-
-similar to attoparsec. Howev
-
-1. Use chunked encoding for bounded types. Decoding is then factored into
-   extracting a lazy bytestring from the chunk lengths and decoding this
-   lazy bytestring efficiently.
-
-2. Use a tagged encoding for recursive types.
-
--}
---
---
--- 2. There are two different efficiency problems:
---      1. Ensure that one pays for backtracking only if one uses it.
---      2. Ensure that bounded types are parsed efficiently; i.e., if there
---         is enough input remaining straight-line IO code should be used.
---
--- 3. Fine-tuning will require that special attentation is paid to strictness
---    issues. They should however not be too difficult.
---    
 
 ------------------------------------------------------------------------------
 -- Benchmarks
@@ -238,16 +147,28 @@ getWord8_noinline = B.getWord8
 
 main :: IO ()
 main = defaultMain
-  [ bgroup "manyWord8s"
+  [ -- Compare how fast we can unpack the input to a list of 'Word8's. This is
+    -- not a realistic benchmarks, but measures very well the abstraction
+    -- overhead of different parser implementations.
+    bgroup "manyWord8s"
       [ bench "unpack" $ nf L.unpack word8Data 
-      , benchParse     manyWord8sViaUnpack word8Data 
+      , benchParse' "attoget (via-unpack)"     manyWord8sViaUnpack word8Data 
       , benchParse     parseManyWord8s word8Data
       , benchAtto      attoManyWord8s word8Data
-      , benchAtto' "attodecode" word8Rest    word8Data
+      , benchAtto' "attodecode ->" (decodeRestWithFD      word8FD)   word8Data
+      , benchAtto' "attodecode ->'" (decodeRestWithFD'    word8FD)   word8Data
+      , benchAtto' "attodecode <-" (decodeRestWithFD_bw   word8FD)   word8Data
+      , benchAtto' "attodecode <-'" (decodeRestWithFD_bw' word8FD)   word8Data
       ]
 
+    -- compare how fast we can unpack as many Word16 as possible from the
+    -- current input.
   , bgroup "manyWord16BEs"
-      [ benchAtto' "attodecode" word16BERest word8Data ]
+      [ benchAtto' "attodecode ->" (decodeRestWithFD      word16BE) word8Data 
+      , benchAtto' "attodecode ->'" (decodeRestWithFD'    word16BE) word8Data 
+      , benchAtto' "attodecode <-" (decodeRestWithFD_bw   word16BE) word8Data
+      , benchAtto' "attodecode <-'" (decodeRestWithFD_bw' word16BE) word8Data
+      ]
 
     -- Here we measure the time for parsing the tagged list format used by
     -- Data.Binary for 'nRepl' words. Compare this to the time for just
@@ -260,6 +181,9 @@ main = defaultMain
       , benchParseViaAtto  parseBinaryWord8s binaryDataFull
       ] 
 
+    -- Compare to the time for parsing the binaryDataFull, which encodes twice
+    -- the number of bytes to estimate the scaling behaviour of the different
+    -- parsing alternatives.
   , bgroup "binaryWord8s"
       [ benchGet           getBinaryWord8s   binaryData
       , benchParse         parseBinaryWord8s binaryData
@@ -267,6 +191,8 @@ main = defaultMain
       , benchParseViaAtto  parseBinaryWord8s binaryData
       ] 
 
+    -- Compare to the speed of 'binaryWord8s' to see the cost of fully
+    -- abstract calls to the '>>=' operator.
   , bgroup "binaryWord8s NOINLINE"
       [ benchGet           getBinaryWord8sNoInline   binaryData
       , benchParse         parseBinaryWord8sNoInline binaryData
@@ -274,6 +200,8 @@ main = defaultMain
       , benchParseViaAtto  parseBinaryWord8sNoInline binaryData
       ] 
 
+    -- Check the speed of different parser implementations in the context of
+    -- parsing a fixed amount of bytes using a very declarative formulation.
   , bgroup "replicateNWord8s"
       [ benchGet     getNWord8s word8Data
       , benchParse   parseNWord8s word8Data
@@ -281,12 +209,13 @@ main = defaultMain
       ]
   ]
   where
-    benchParse p inp = bench "attoget" $ nf (fst . runParser p) inp
+    benchParse             = benchParse' "attoget"
+    benchParse' name p inp = bench name $ nf (fst . runParser p) inp
 
-    benchParseViaAtto p = benchAtto' "attoparsec-get" (toAttoparsec p)
+    benchParseViaAtto p    = benchAtto' "attoparsec-get" (toAttoparsec p)
 
-    benchAtto = benchAtto' "attoparsec"
-    benchAtto' name p inp = bench name $ nf (A.eitherResult . A.parse p) inp
+    benchAtto              = benchAtto' "attoparsec"
+    benchAtto' name p inp  = bench name $ nf (A.eitherResult . A.parse p) inp
 
-    benchGet p inp = bench "binaryget" $ nf (B.runGet p) inp
+    benchGet p inp         = bench "binaryget" $ nf (B.runGet p) inp
 

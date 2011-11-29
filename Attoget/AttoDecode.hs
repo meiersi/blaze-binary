@@ -1,16 +1,24 @@
 {-# LANGUAGE ScopedTypeVariables, BangPatterns #-}
 -- | Decoding of bounded values with parsers based on attoparsec
-module Attoget.AttoDecode (word8Rest, word16BERest) where
+module Attoget.AttoDecode 
+  ( decodeRestWithFD
+  , decodeRestWithFD'
+  , decodeRestWithFD_bw
+  , decodeRestWithFD_bw'
+  , word8FD
+  , word16BE
+  ) where
 
 import qualified Data.ByteString                 as S
 -- import qualified Data.ByteString.Unsafe          as S
 import qualified Data.ByteString.Internal        as S
--- import qualified Data.ByteString.Lazy            as L
+import qualified Data.ByteString.Lazy            as L
 -- import qualified Data.ByteString.Lazy.Internal   as L
 import           Data.ByteString.Char8 () 
 
 import           Data.Attoparsec.ByteString     
-import qualified Data.Attoparsec.Internal.Types as T
+import qualified Data.Attoparsec.ByteString.Lazy as AL
+import qualified Data.Attoparsec.Internal.Types  as T
 import           Data.Attoparsec.Internal.Types
                    hiding (Parser, Input, Added, Failure, Success)
 
@@ -93,9 +101,11 @@ instance Applicative FD where
   FD fs fio <*> FD xs xio = 
       FD (fs + xs) (\ip -> fio ip <*> xio (ip `plusPtr` fs))
 
+{-# INLINE word8FD #-}
 word8FD :: FD Word8
 word8FD = FD 1 peek
 
+{-# INLINE word16BE #-}
 word16BE :: FD Word16
 word16BE = 
     (\w1 w2 -> fromIntegral w1 `shiftL` 8 .|. fromIntegral w2) 
@@ -137,6 +147,101 @@ decodeRestWithFD fd =
               where
                 ip' = ip `plusPtr` fdSize fd
                 bs' = S.PS fpbuf (ip `minusPtr` pbuf) (ipe `minusPtr` ip)
+
+-- | Decode the rest of the input with the given fixed decoding. There may be
+-- left-over input smaller than the fixed decoding.
+{-# INLINE decodeRestWithFD' #-}
+decodeRestWithFD' :: forall a. FD a -> Parser [a]
+decodeRestWithFD' fd = 
+    reverse <$> decodeChunk []
+  where
+    decodeChunk xs0 = 
+        (ensure (fdSize fd) >>= decode) <|> return xs0
+      where
+        decode (S.PS fpbuf o l) =
+            S.inlinePerformIO $ go xs0 ip0 <* touchForeignPtr fpbuf
+          where
+            pbuf = unsafeForeignPtrToPtr fpbuf
+            ip0  = pbuf `plusPtr` o
+            ipe  = ip0 `plusPtr` l
+
+            go :: [a] -> Ptr Word8 -> IO (Parser [a])
+            go xs !ip 
+              | ip' <= ipe = do
+                    x <- fdIO fd ip
+                    go (x : xs) ip'
+              | otherwise = return $ put bs' >> decodeChunk xs
+              where
+                ip' = ip `plusPtr` fdSize fd
+                bs' = S.PS fpbuf (ip `minusPtr` pbuf) (ipe `minusPtr` ip)
+
+-- | Decode the rest of the input with the given fixed decoding. There may be
+-- left-over input smaller than the fixed decoding. Backwards decoding is
+-- quite a bit faster (50%). It is also lazy in the bytestring and may
+-- therefore lead to space leaks due to dangling references to the parsed
+-- chunks. If we want even better speed, then we could help the cache by
+-- being lazy with respect to 4kb-sized list chunks. See
+-- Data.ByteString.Internal for more information.
+{-# INLINE decodeRestWithFD_bw #-}
+decodeRestWithFD_bw :: forall a. FD a -> Parser [a]
+decodeRestWithFD_bw fd = 
+    decodeChunk 
+  where
+    s           = fdSize fd
+
+    decodeChunk = 
+        do (S.PS fpbuf o l) <- ensure s
+           let (!n, lRem) = l `quotRem` s
+               o'         = o + n * s
+               !bs'       = S.PS fpbuf o' lRem
+               pbuf       = unsafeForeignPtrToPtr fpbuf
+               ipBase     = pbuf `plusPtr` o
+               ip0        = pbuf `plusPtr` o'
+
+               go xs !ip 
+                 | ipBase <= ip' = do
+                       x <- fdIO fd ip'
+                       go (x : xs) ip'
+                 | otherwise = return xs
+                 where
+                   ip' = ip `plusPtr` (negate s)
+
+           put bs'
+           xs <- decodeChunk
+           return $ S.inlinePerformIO $ go xs ip0 <* touchForeignPtr fpbuf
+       <|> return []
+
+-- | Backwards decoding which is strict in decoding the whole list.
+{-# INLINE decodeRestWithFD_bw' #-}
+decodeRestWithFD_bw' :: forall a. FD a -> Parser [a]
+decodeRestWithFD_bw' fd = 
+    S.inlinePerformIO <$> decodeChunk 
+  where
+    s           = fdSize fd
+
+    decodeChunk :: Parser (IO [a])
+    decodeChunk = 
+        do (S.PS fpbuf o l) <- ensure s
+           let (!n, lRem) = l `quotRem` s
+               o'         = o + n * s
+               !bs'       = S.PS fpbuf o' lRem
+               pbuf       = unsafeForeignPtrToPtr fpbuf
+               ipBase     = pbuf `plusPtr` o
+               ip0        = pbuf `plusPtr` o'
+
+               go :: Ptr Word8 -> [a] -> IO [a]
+               go !ip xs
+                 | ipBase <= ip' = do
+                       x <- fdIO fd ip'
+                       go ip' (x : xs)
+                 | otherwise = return xs
+                 where
+                   ip' = ip `plusPtr` (negate s)
+
+           put bs'
+           xsIO <- decodeChunk
+           return $ (go ip0 =<< xsIO) <* touchForeignPtr fpbuf
+       <|> return (return [])
 
 word8Rest :: Parser [Word8]
 word8Rest = decodeRestWithFD word8FD
