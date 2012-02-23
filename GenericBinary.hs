@@ -2,9 +2,16 @@
 {-# LANGUAGE FlexibleInstances, FlexibleContexts #-}
 {-# LANGUAGE DefaultSignatures, UndecidableInstances #-}
 
-import Data.Maybe
-import qualified Data.Set as S
-import GHC.Generics
+import           Data.Maybe
+import           Data.Monoid
+import           Blaze.ByteString.Builder
+import qualified Blaze.ByteString.Builder.Char.Utf8 as Utf8
+import qualified Data.ByteString.Lazy as L
+-- import qualified Data.Set as S
+import           Numeric (showHex)
+
+import           GHC.Generics
+
 
 data Expr a =
          Var a
@@ -25,62 +32,91 @@ instance (NConstrs f, NConstrs g) => NConstrs (f :+: g) where
   gnconstrs _ = 
       gnconstrs (undefined :: f x) + gnconstrs (undefined :: g x)
 
+putIntHost :: Int -> Builder
+putIntHost = fromInthost
+
+putWord8Tag :: Int -> Builder
+putWord8Tag = fromInt8 . fromIntegral
+
+putWord16Tag :: Int -> Builder
+putWord16Tag = fromInt16be . fromIntegral
 
 nconstrs :: forall a. (Generic a, NConstrs (Rep a)) => a -> Int
 nconstrs _ = gnconstrs (from (undefined :: a))
 
 class GSer f where
-  gser :: Maybe Int -> f () -> String
+  gser :: Int -> Maybe Int -> f () -> Builder
 
 instance GSer U1 where
-  gser _ _ = ""
+  gser _ _ _ = mempty
 
 instance Ser c => GSer (K1 i c) where
-  gser _ (K1 x) = ser x
+  gser _ _ (K1 x) = ser x
 
 instance GSer f => GSer (M1 S c f) where
-  gser _ (M1 x) = gser Nothing x
+  gser n _ (M1 x) = gser n Nothing x
 
 instance GSer f => GSer (M1 D c f) where
-  gser _ (M1 x) = gser Nothing x
+  gser n _ (M1 x) = gser n Nothing x
 
 instance GSer f => GSer (M1 C c f) where
-  gser Nothing    (M1 x) = gser Nothing x
-  gser (Just tag) (M1 x) = show tag ++ ":" ++ gser Nothing x
+  gser n Nothing    (M1 x) = gser n Nothing x
+  gser n (Just tag) (M1 x)
+    | n <= 0xff   = putWord8Tag  tag `mappend` gser n Nothing x
+    | n <= 0xffff = putWord16Tag tag `mappend` gser n Nothing x
+    | otherwise   = error "GSer: max. 0xffff constructors supported."
 
 instance (NConstrs f, GSer f, GSer g) => GSer (f :+: g) where
-  gser offset x = case x of
-      L1 l -> gser (Just o) l
-      R1 r -> gser (Just $ o + (gnconstrs (undefined :: f ()))) r
+  gser n off x = case x of
+      L1 l -> gser n (Just o) l
+      R1 r -> gser n (Just (o + (gnconstrs (undefined :: f ())))) r
     where
-      o = fromMaybe 0 offset
+      o = fromMaybe 0 off
 
 instance (GSer f, GSer g) => GSer (f :*: g) where
-  gser _ (x :*: y) = gser Nothing x ++ gser Nothing y
+  gser n _ (x :*: y) = gser n Nothing x `mappend` gser n Nothing y
 
 class Ser a where
-    ser :: a -> String
+    ser :: a -> Builder
 
-    default ser :: (Generic a, GSer (Rep a)) => a -> String
-    ser x = gser Nothing (from x)
+    default ser :: (Generic a, NConstrs (Rep a), GSer (Rep a)) => a -> Builder
+    ser x = gser (nconstrs x) Nothing (from x)
 
 instance Ser Int where
-    ser = show
+    ser = putIntHost
 
 instance Ser Char where
-    ser = show
+    ser = Utf8.fromChar
 
+instance (Ser a, Ser b) => Ser (a, b) where
 instance Ser a => Ser (Maybe a) where
+instance Ser a => Ser [a] where
 instance Ser a => Ser (Expr a) where
 
+testSer :: Ser a => a -> IO ()
+testSer = putStrLn . concatMap (pad . (`showHex` "")) 
+        . L.unpack . toLazyByteString . ser 
+    where
+      pad ""  = "00"
+      pad [c] = '0' : c : []
+      pad cs  = cs
 
 main :: IO ()
-main = putStrLn $ ser (Plus (Var 'a') (Var 'b'))
+main = testSer $ 'a' -- (Plus (Var 'a') (Var 'b'))
 
+
+e1 :: Expr String
+e1 = Plus (Var "haskell") (Lit (Just 1))
+
+{-
 data Tree b a = Leaf b a
               | Node (Tree (b, b) a) (Tree b (a, a))
             deriving (Generic)
 
+-}
+
+
+{-
 ----
 -- Goal: gather all type names referenced by a type
 
@@ -142,3 +178,4 @@ instance Types a => Types (Expr a) where
 getTypes :: Types a => a -> S.Set String
 getTypes x = types x S.empty
 
+-}
