@@ -111,8 +111,13 @@ shortData = S8.pack "12345abcdef 123123"
 
 main :: IO ()
 main = defaultMain
-    [ bench "wordHex"     $ nf (maybe 0 fst . wordHex)     shortData
+    [ -- 'wordHex' is almost twice as fast as 'readHexadecimal'
+      bench "wordHex"     $ nf (maybe 0 fst . wordHex)     shortData
     , bench "readHexadecimal" $ nf ((maybe 0 fst . readHexadecimal) :: S8.ByteString -> Word64) shortData
+
+    -- 'wordDec_' is slightly faster per digit, while 'readDecimal_' has a
+    -- slightly lower fixed cost. At the length of 3 digits they are equally
+    -- fast.
     , bench "wordDec_"     $ nf wordDec_     shortData
     , bench "readDecimal_" $ nf (readDecimal_ :: S8.ByteString -> Word64) shortData
     ]
