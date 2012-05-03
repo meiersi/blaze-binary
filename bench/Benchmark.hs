@@ -14,7 +14,7 @@ import           Prelude hiding (words)
 import           Criterion.Main
 
 import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
-import qualified Data.Blaze.Binary.Decoding  as Blaze (word8s, word8sSimple, runParser)
+import qualified Data.Blaze.Binary.Decoding  as Blaze (word8s, word8sSimple, runDecoder)
 import qualified Data.ByteString             as S
 import qualified Data.ByteString.Lazy        as L
 import qualified Data.ByteString.Lazy.Char8  as LC8
@@ -78,8 +78,8 @@ word8Data n = take n $ cycle [(0::Word8)..]
 main :: IO ()
 main = Criterion.Main.defaultMain $ 
     [ bgroup "decode"
-      [ bench "blaze-binary: word8s" $ nf (Blaze.runParser Blaze.word8s) (Blaze.toByteString $ word8Data nRepl)
-      , bench "blaze-binary: word8sSimple" $ nf (Blaze.runParser Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
+      [ bench "blaze-binary: word8s" $ nf (Blaze.runDecoder Blaze.word8s) (Blaze.toByteString $ word8Data nRepl)
+      , bench "blaze-binary: word8sSimple" $ nf (Blaze.runDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
       , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
       , bench "binary: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
       ]

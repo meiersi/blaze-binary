@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns, DeriveDataTypeable, OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables, BangPatterns, DeriveDataTypeable, OverloadedStrings #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Data.Blaze.Binary.Encoding
@@ -34,67 +34,134 @@ data ParseException = ParseException String {-# UNPACK #-} !(Ptr Word8)
 
 instance Exception ParseException where
 
-newtype Parser a = Parser { unParser :: Buffer -> IO (Res a) }
+newtype Decoder a = Decoder { unDecoder :: Buffer -> IO (Res a) }
 
 instance Functor Res where
     {-# INLINE fmap #-}
     fmap f (Res x ip) = Res (f x) ip
 
-instance Functor Parser where
-    fmap f = Parser . fmap (fmap (fmap f)) . unParser
+instance Functor Decoder where
+    fmap f = Decoder . fmap (fmap (fmap f)) . unDecoder
 
-instance Applicative Parser where
+instance Applicative Decoder where
     {-# INLINE pure #-}
-    pure x = Parser $ \(Buffer ip _) -> return (Res x ip)
+    pure x = Decoder $ \(Buffer ip _) -> return (Res x ip)
 
     {-# INLINE (<*>) #-}
-    Parser fIO <*> Parser xIO = Parser $ \ !buf@(Buffer _ ipe0) -> do
+    Decoder fIO <*> Decoder xIO = Decoder $ \ !buf@(Buffer _ ipe0) -> do
         Res f ip1 <- fIO buf
         Res x ip2 <- xIO (Buffer ip1 ipe0)
         evaluate (Res (f x) ip2)
 
-instance Monad Parser where
+instance Monad Decoder where
     {-# INLINE return #-}
     return = pure
 
     {-# INLINE (>>=) #-}
-    Parser xIO >>= f = Parser $ \ !buf@(Buffer _ ipe0) -> do
+    Decoder xIO >>= f = Decoder $ \ !buf@(Buffer _ ipe0) -> do
         Res x ip1 <- xIO buf
-        unParser (f x) (Buffer ip1 ipe0)
+        unDecoder (f x) (Buffer ip1 ipe0)
 
     {-# INLINE fail #-}
-    fail msg = Parser $ \(Buffer ip _) -> throw $ ParseException msg ip
+    fail msg = Decoder $ \(Buffer ip _) -> throw $ ParseException msg ip
 
 
-requires :: Int -> Parser a -> Parser a
-requires n p = Parser $ \buf@(Buffer ip ipe) ->
+requires :: Int -> Decoder a -> Decoder a
+requires n p = Decoder $ \buf@(Buffer ip ipe) ->
     if ipe `minusPtr` ip >= n
-      then unParser p buf
+      then unDecoder p buf
       else throw $ (`ParseException` ip) $
              "required " ++ show n ++ 
              " bytes, but there are only " ++ show (ipe `minusPtr` ip) ++
              " bytes left."
 
+{-# INLINE storable #-}
+storable :: forall a. Storable a => Decoder a
+storable = Decoder $ \(Buffer ip ipe) -> do
+    let ip' = ip `plusPtr` size
+    if ip' <= ipe
+      then do x <- peek (castPtr ip)
+              return (Res x ip')
+      else throw $ (`ParseException` (ip' `plusPtr` negate size)) $
+             "less than the required " ++ show size ++ " bytes left."
+  where
+    size = sizeOf (undefined :: a)
+
+runDecoder :: Decoder a -> S.ByteString -> Either String a
+runDecoder p (S.PS fpbuf off len) = S.inlinePerformIO $ do
+    withForeignPtr fpbuf $ \pbuf -> do
+        let !ip  = pbuf `plusPtr` off
+            !ipe = ip `plusPtr` len
+        (`catch` handler) $ do
+            Res x _ <- unDecoder p (Buffer ip ipe)
+            return (Right x)
+  where
+    handler :: ParseException -> IO (Either String a)
+    handler (ParseException msg _) = return $ Left msg
+
+-- Primitive parsers
+--------------------
 
 {-# INLINE word8 #-}
-word8 :: Parser Word8
-word8 = Parser $ \(Buffer ip ipe) -> do
-    let ip' = ip `plusPtr` 1
-    if ip' < ipe
-      then do x <- peek ip
-              return (Res x ip')
-      else throw $ (`ParseException` (ip' `plusPtr` (-1))) $
-             "less than the one byte left"
+word8 :: Decoder Word8
+word8 = storable
 
-word8sSimple :: Parser [Word8]
-word8sSimple = do
-    tag <- word8
-    case tag of
-      0 -> return []
-      1 -> (:) <$> word8 <*> word8s
-      _ -> fail $ "word8s: unexpected tag " ++ show tag
+{-# INLINE word16 #-}
+word16 :: Decoder Word16
+word16 = storable
 
-word8s :: Parser [Word8]
+{-# INLINE word32 #-}
+word32 :: Decoder Word32
+word32 = storable
+
+{-# INLINE word64 #-}
+word64 :: Decoder Word64
+word64 = storable
+
+{-# INLINE word #-}
+word :: Decoder Word
+word = storable
+
+{-# INLINE int8 #-}
+int8 :: Decoder Int8
+int8 = storable
+
+{-# INLINE int16 #-}
+int16 :: Decoder Int16
+int16 = storable
+
+{-# INLINE int32 #-}
+int32 :: Decoder Int32
+int32 = storable
+
+{-# INLINE int64 #-}
+int64 :: Decoder Int64
+int64 = storable
+
+{-# INLINE int #-}
+int :: Decoder Int
+int = storable
+
+
+-- Decoder combinators
+--------------------
+
+{-# INLINE decodeList #-}
+decodeList :: Decoder a -> Decoder [a]
+decodeList x = 
+    go
+  where 
+    go = do tag <- word8
+            case tag of
+              0 -> return []
+              1 -> (:) <$> x <*> go
+              _ -> fail $ "decodeList: unexpected tag " ++ show tag
+
+
+word8sSimple :: Decoder [Word8]
+word8sSimple = decodeList word8
+
+word8s :: Decoder [Word8]
 word8s =
     go []
   where
@@ -105,16 +172,4 @@ word8s =
           1 -> do x <- word8
                   go (x:xs)
           _ -> fail $ "word8s: unexpected tag " ++ show tag
-
-runParser :: Parser a -> S.ByteString -> Either String a
-runParser p (S.PS fpbuf off len) = S.inlinePerformIO $ do
-    withForeignPtr fpbuf $ \pbuf -> do
-        let !ip  = pbuf `plusPtr` off
-            !ipe = ip `plusPtr` len
-        (`catch` handler) $ do
-            Res x _ <- unParser p (Buffer ip ipe)
-            return (Right x)
-  where
-    handler :: ParseException -> IO (Either String a)
-    handler (ParseException msg _) = return $ Left msg
 
