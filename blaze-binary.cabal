@@ -1,0 +1,43 @@
+name:                   blaze-binary
+version:                0.1.0.0
+license:                BSD3
+license-file:           LICENSE
+author:                 Simon Meier <iridcode@gmail.com>
+maintainer:             Simon Meier <iridcode@gmail.com>
+category:               Data
+stability:              experimental
+build-type:             Simple
+cabal-version:          >= 1.6
+synopsis:               A binary serialization library
+
+description:
+  A binary serialization library, similar to binary and cereal, 
+  but with better performance and support for inspecting the primitive stream
+  of values representing an encoded Haskell value.
+
+extra-source-files:
+  LICENCE
+
+source-repository head
+  type:     git
+  location: git://github.com/meiersi/blaze-binary.git
+
+library
+        build-depends:          base               == 4.*
+                              , bytestring         == 0.9.*
+                              , bytestring-builder == 0.1.*
+                              , containers         == 0.4.*
+                              , array              == 0.3.*
+
+        hs-source-dirs:         src
+
+        exposed-modules:        Data.Blaze.Binary
+
+        extensions:             FlexibleContexts
+                              , FlexibleInstances
+                              , MagicHash
+                              , BangPatterns
+                              , OverloadedStrings
+
+        ghc-options:            -Wall
+        ghc-prof-options:       -prof -auto-all
