@@ -1,0 +1,72 @@
+Overview
+========
+
+Projects such as cloud-haskell or acid-state crucially rely on performant,
+generic serialization. As I've developed the new bytestring builder, I
+wondered what speedup I could gain using it for encoding a Haskell value to an
+unambiguous binary representation. This library, `blaze-binary`, is the
+(current) result state of this experiment.
+
+In preliminary benchmarks on my i7, 64bit Linux machine, this library is 2 - 4
+times faster for binary encoding than both `binary-0.5.0.2` and
+`cereal-0.3.5.1`. I have not yet implemented the decoding-half of this
+library.
+
+As an additional improvement over binary and cereal, this library can
+also output a textual representation of the sequence of primitive values
+(e.g., `Int`s, `Double`s, and strict `ByteString`s). Moreover, the encoding
+for this stream of primitive values can be chosen at runtime without any
+performance impact. This allows for example a developer of a CloudHaskell
+application to analyse the messages sent and received without having access to
+the type of the data being sent. This is especially interesting for displaying
+error messages in the case of a failed parse of a received message.
+
+Encoding Implementation
+=======================
+
+The implementation uses a two step approach to encode a Haskell value to a
+sequence of bytes.  In a first step, the Haskell value is converted to a
+stream of primitive values, where a primitive value is an `IntX` or `WordX`
+for `X` in `["", "8","16","32","64"]`, a `Float`, `Double`, `Integer`, or a
+`ByteString` value. The conversion uses a difference list representation of
+the primitive stream to ensure *O(1)*-concatentation.  In the second step, the
+stream of primitive values is converted to a sequence of bytes using the new
+bytestring builder and its support for bounded encodings. 
+
+This splitting of the encoding into a "flattening pass" and an "primtive
+encoding pass" results in the nice benefit that the encoding of the stream of
+primitive values can be chosen at runtime. Morover, it is more efficient, as
+the benchmarks demonstrate. In the beginning, I implemented a version that
+encodes the values directly using the new bytestring builder. This initial
+version did not result in any speedup with respect to binary and cereal. My
+current hypothesis is that the type of all of these builders leads to too many
+unknown and possibly even unsaturated calls, whereas the difference list for
+the stream of primitive values only results in calls to unknown THUNKs.
+Evaluating unknown THUNKs is the fastest unkwon call.
+
+
+High-level Encoding Format
+==========================
+
+In contrast to binary and cereal, this library encodes lists in a streaming
+fashion, tagging `(:)` with 1 and `[]` with 0. This results in only one pass
+through a list and reduces GC pressure as it retains less memory than the list
+serialization used by binary and cereal, which prefixes the list with the
+number of elements.
+
+We also do not use the `Put` monad. The monadic value-passing is just not
+required.
+
+
+Planned Changes
+===============
+
+For a first release, I think the following points need to be addressed.
+
+  - provide efficient decoding support
+
+I'd also like to investigate the following issues.
+
+  - measure performance of using base-128 variable length encodings
+  - complete the API such that debugging of CloudHaskell works as described
+    above
