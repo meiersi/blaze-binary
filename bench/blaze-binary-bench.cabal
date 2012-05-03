@@ -16,10 +16,11 @@ executable blaze-binary-bench
   main-is:           Benchmark.hs
   hs-source-dirs:    src .
   build-depends:     base
-                     , containers == 0.4.*
-                     , array      == 0.3.*
-                     , bytestring == 0.9.*
-                     , criterion
-                     , cereal     == 0.3.*
-                     , binary     == 0.5.*
-                     , bytestring-builder == 0.1.*
+                   , ghc-prim
+                   , containers == 0.4.*
+                   , array      == 0.3.*
+                   , bytestring == 0.9.*
+                   , criterion
+                   , cereal     == 0.3.*
+                   , binary     == 0.5.*
+                   , bytestring-builder == 0.1.*
