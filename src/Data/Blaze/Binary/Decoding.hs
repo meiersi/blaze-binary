@@ -23,6 +23,7 @@ import Data.Typeable
 import qualified Data.ByteString.Internal as S
 import GHC.Prim
 import GHC.Ptr
+import GHC.Word
 import GHC.Exts
 import GHC.IO (IO(IO))
 import Foreign 
@@ -33,26 +34,28 @@ data ParseException = ParseException String -- {-# UNPACK #-} !(Ptr Word8)
 instance Exception ParseException where
 
 newtype Decoder a = Decoder { 
-          unDecoder :: Addr# -> Addr# -> State# RealWorld -> (# State# RealWorld, Addr#, a #)
+          unDecoder :: ForeignPtr Word8 -> Addr# -> Addr# 
+                    -> State# RealWorld -> (# State# RealWorld, Addr#, a #)
         }
 
 instance Functor Decoder where
-    fmap f = \(Decoder io) -> Decoder $ \ip0 ipe0 s0 -> case io ip0 ipe0 s0 of
-      (# s1, ip1, x #) -> (# s1, ip1, f x #)
+    fmap f = \(Decoder io) -> Decoder $ \fpbuf ip0 ipe s0 -> 
+        case io fpbuf ip0 ipe s0 of
+            (# s1, ip1, x #) -> (# s1, ip1, f x #)
 
 instance Applicative Decoder where
     {-# INLINE pure #-}
-    pure x = Decoder $ \ip0 _ s0 -> (# s0, ip0, x #)
+    pure x = Decoder $ \_ ip0 _ s0 -> (# s0, ip0, x #)
 
     {-# INLINE (<*>) #-}
-    Decoder fIO <*> Decoder xIO = Decoder $ \ip0 ipe0 s0 ->
-        case fIO ip0 ipe0 s0 of
-          (# s1, ip1, f #) -> case xIO ip1 ipe0 s1 of
+    Decoder fIO <*> Decoder xIO = Decoder $ \fpbuf ip0 ipe s0 ->
+        case fIO fpbuf ip0 ipe s0 of
+          (# s1, ip1, f #) -> case xIO fpbuf ip1 ipe s1 of
             (# s2, ip2, x #) -> (# s2, ip2, f x #)
 
 {-# INLINE liftIO #-}
 liftIO :: IO a -> Decoder a
-liftIO (IO io) = Decoder $ \ip0 _ s0 -> case io s0 of
+liftIO (IO io) = Decoder $ \_ ip0 _ s0 -> case io s0 of
   (# s1, x #) -> (# s1, ip0, x #)
 
 {-# INLINE runIO #-}
@@ -64,9 +67,9 @@ instance Monad Decoder where
     return = pure
 
     {-# INLINE (>>=) #-}
-    Decoder xIO >>= f = Decoder $ \ip0 ipe0 s0 ->
-        case xIO ip0 ipe0 s0 of
-          (# s1, ip1, x #) -> unDecoder (f x) ip1 ipe0 s1
+    Decoder xIO >>= f = Decoder $ \fpbuf ip0 ipe s0 ->
+        case xIO fpbuf ip0 ipe s0 of
+          (# s1, ip1, x #) -> unDecoder (f x) fpbuf ip1 ipe s1
 
     {-# INLINE fail #-}
     fail msg = liftIO $ throw $ ParseException msg
@@ -85,14 +88,14 @@ requires n p = Decoder $ \buf@(Buffer ip ipe) ->
 
 {-# INLINE storable #-}
 storable :: forall a. Storable a => Decoder a
-storable = Decoder $ \ip0 ipe0 s0 ->
+storable = Decoder $ \fpbuf ip0 ipe s0 ->
     let ip1 = plusAddr# ip0 size in 
-      if Ptr ip1 <= Ptr ipe0
+      if Ptr ip1 <= Ptr ipe
         then case runIO (peek (Ptr ip0)) s0 of
                (# s1, x #) -> (# s1, ip1, x #)
         else unDecoder 
                 (fail $ "less than the required " ++ show (I# size) ++ " bytes left.")
-                ip0 ipe0 s0
+                fpbuf ip0 ipe s0
   where
     !(I# size) = sizeOf (undefined :: a)
 
@@ -102,7 +105,7 @@ runDecoder p (S.PS fpbuf off len) = S.inlinePerformIO $ do
         let !(Ptr ip)  = pbuf `plusPtr` off
             !(Ptr ipe) = Ptr ip `plusPtr` len
         (`catch` handler) $ do
-            x <- IO $ \s0 -> case unDecoder p ip ipe s0 of
+            x <- IO $ \s0 -> case unDecoder p fpbuf ip ipe s0 of
                                (# s1, _, x #) -> (# s1, x #)
             return (Right x)
   where
@@ -152,6 +155,40 @@ int64 = storable
 int :: Decoder Int
 int = storable
 
+{-# INLINE float #-}
+float :: Decoder Float
+float = storable
+
+{-# INLINE double #-}
+double :: Decoder Double
+double = storable
+
+{-# INLINE byteStringSlice #-}
+byteStringSlice :: Int -> Decoder S.ByteString
+byteStringSlice len = Decoder $ \fpbuf ip0 ipe s0 ->
+    let ip1 = Ptr ip0 `plusPtr` len
+    in 
+      if ip1 <= Ptr ipe
+        then (# s0
+             , getAddr ip1
+             ,  S.PS fpbuf (Ptr ip0 `minusPtr` unsafeForeignPtrToPtr fpbuf) len
+             #)
+        else unDecoder 
+                (fail $ "less than the required " ++ show len ++ " bytes left.")
+                fpbuf ip0 ipe s0
+
+char :: Decoder Char
+char = do
+    w0 <- word8
+    case () of
+      _ | w0 < 0x80 -> return (chr1 w0)
+        | w0 < 0xe0 -> chr2 w0 <$> word8
+        | w0 < 0xf0 -> chr3 w0 <$> word8 <*> word8
+        | otherwise -> chr4 w0 <$> word8 <*> word8 <*> word8
+
+{-# INLINE getAddr #-}
+getAddr :: Ptr a -> Addr#
+getAddr (Ptr a) = a
 
 -- Decoder combinators
 --------------------
@@ -169,14 +206,25 @@ decodeList x =
 
 {-# INLINE decodeMaybe #-}
 decodeMaybe :: Decoder a -> Decoder (Maybe a)
-decodeMaybe x = 
+decodeMaybe just = 
     go
   where 
     go = do tag <- word8
             case tag of
               0 -> return Nothing
-              1 -> Just <$> x
+              1 -> Just <$> just
               _ -> fail $ "decodeMaybe: unexpected tag " ++ show tag
+
+{-# INLINE decodeEither #-}
+decodeEither :: Decoder a -> Decoder b -> Decoder (Either a b)
+decodeEither left right = 
+    go
+  where 
+    go = do tag <- word8
+            case tag of
+              0 -> Left <$> left 
+              1 -> Right <$> right
+              _ -> fail $ "decodeEither: unexpected tag " ++ show tag
 
 
 word8sSimple :: Decoder [Word8]
@@ -194,3 +242,44 @@ word8s =
                   go (x:xs)
           _ -> fail $ "word8s: unexpected tag " ++ show tag
 
+------------------------------------------------------------------------------
+-- UTF-8 decoding helpers
+------------------------------------------------------------------------------
+
+chr1 :: Word8 -> Char
+chr1 (W8# x#) = C# (chr# (word2Int# x#))
+{-# INLINE chr1 #-}
+
+chr2 :: Word8 -> Word8 -> Char
+chr2 (W8# x1#) (W8# x2#) = C# (chr# (z1# +# z2#))
+    where
+      !y1# = word2Int# x1#
+      !y2# = word2Int# x2#
+      !z1# = uncheckedIShiftL# (y1# -# 0xC0#) 6#
+      !z2# = y2# -# 0x80#
+{-# INLINE chr2 #-}
+
+chr3 :: Word8 -> Word8 -> Word8 -> Char
+chr3 (W8# x1#) (W8# x2#) (W8# x3#) = C# (chr# (z1# +# z2# +# z3#))
+    where
+      !y1# = word2Int# x1#
+      !y2# = word2Int# x2#
+      !y3# = word2Int# x3#
+      !z1# = uncheckedIShiftL# (y1# -# 0xE0#) 12#
+      !z2# = uncheckedIShiftL# (y2# -# 0x80#) 6#
+      !z3# = y3# -# 0x80#
+{-# INLINE chr3 #-}
+
+chr4             :: Word8 -> Word8 -> Word8 -> Word8 -> Char
+chr4 (W8# x1#) (W8# x2#) (W8# x3#) (W8# x4#) =
+    C# (chr# (z1# +# z2# +# z3# +# z4#))
+    where
+      !y1# = word2Int# x1#
+      !y2# = word2Int# x2#
+      !y3# = word2Int# x3#
+      !y4# = word2Int# x4#
+      !z1# = uncheckedIShiftL# (y1# -# 0xF0#) 18#
+      !z2# = uncheckedIShiftL# (y2# -# 0x80#) 12#
+      !z3# = uncheckedIShiftL# (y3# -# 0x80#) 6#
+      !z4# = y4# -# 0x80#
+{-# INLINE chr4 #-}

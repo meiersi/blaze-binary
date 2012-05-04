@@ -27,12 +27,12 @@ library
                               , bytestring         == 0.9.*
                               , bytestring-builder == 0.1.*
                               , containers         == 0.4.*
-                              , array              == 0.3.*
+                              , array              >= 0.3   && < 0.5
+                              , ghc-prim
 
         hs-source-dirs:         src
 
         exposed-modules:        Data.Blaze.Binary
-
         extensions:             FlexibleContexts
                               , FlexibleInstances
                               , MagicHash

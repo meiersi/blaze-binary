@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
+{-# LANGUAGE BangPatterns, FlexibleContexts, FlexibleInstances #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Data.Blaze.Binary
@@ -20,7 +20,10 @@ module Data.Blaze.Binary (
 
     ) where
 
+import Control.Applicative
+
 import Data.Blaze.Binary.Encoding
+import qualified Data.Blaze.Binary.Decoding as D
 
 import Data.Word
 import Data.Monoid
@@ -31,7 +34,7 @@ import Foreign
 import           Data.Array.Unboxed
 import qualified Data.ByteString               as S
 import qualified Data.ByteString.Lazy          as L
-import qualified Data.ByteString.Lazy.Internal as L (foldrChunks)
+import qualified Data.ByteString.Lazy.Internal as L (foldrChunks, ByteString(..))
 import qualified Data.ByteString.Lazy.Builder  as B
 import qualified Data.Map                      as Map
 import qualified Data.Set                      as Set
@@ -56,6 +59,7 @@ type Encoding t = t -> VStream
 class Binary t where
     -- | Encode a value in the Put monad.
     encode :: Encoding t
+    decode :: D.Decoder t
 
 -- | Encode a value to a strict 'S.ByteString'.
 toByteString :: Binary t => t -> S.ByteString
@@ -70,21 +74,37 @@ toLazyByteString = B.toLazyByteString . render . encode
 ------------------------------------------------------------------------
 -- Simple instances
 
+wrongTag :: Show a => String -> a -> D.Decoder b
+wrongTag loc tag = fail $ "decode " ++ loc ++ ": could not parse tag " ++ show tag
+
 -- The () type need never be written to disk: values of singleton type
 -- can be reconstructed from the type alone
 instance Binary () where
     {-# INLINE encode #-}
-    encode ()  = mempty
+    encode () = mempty
+    {-# INLINE decode #-}
+    decode = return ()
 
 -- Bools are encoded as a byte in the range 0 .. 1
 instance Binary Bool where
     {-# INLINE encode #-}
-    encode     = word8 . fromIntegral . fromEnum
+    encode = \x -> word8 (if x then 1 else 0)
+    decode = do tag <- D.word8 
+                case tag of 
+                  0 -> return False
+                  1 -> return True
+                  _ -> wrongTag "Bool" tag
 
 -- Values of type 'Ordering' are encoded as a byte in the range 0 .. 2
 instance Binary Ordering where
     {-# INLINE encode #-}
-    encode     = word8 . fromIntegral . fromEnum
+    encode = \x -> word8 (case x of LT -> 0; EQ -> 1; GT -> 2)
+    decode = do tag <- D.word8 
+                case tag of 
+                  0 -> return LT
+                  1 -> return EQ
+                  2 -> return GT
+                  _ -> wrongTag "Ordering" tag
 
 ------------------------------------------------------------------------
 -- Words and Ints
@@ -92,42 +112,58 @@ instance Binary Ordering where
 -- Words8s are written as bytes
 instance Binary Word8 where
     {-# INLINE encode #-}
-    encode     = word8
+    encode = word8
+    {-# INLINE decode #-}
+    decode = D.word8
 
 -- Words16s are written as 2 bytes in big-endian (network) order
 instance Binary Word16 where
     {-# INLINE encode #-}
-    encode     = word16
+    encode  = word16
+    {-# INLINE decode #-}
+    decode = D.word16
 
 -- Words32s are written as 4 bytes in big-endian (network) order
 instance Binary Word32 where
     {-# INLINE encode #-}
     encode     = word32
+    {-# INLINE decode #-}
+    decode = D.word32
 
 -- Words64s are written as 8 bytes in big-endian (network) order
 instance Binary Word64 where
     {-# INLINE encode #-}
     encode     = word64
+    {-# INLINE decode #-}
+    decode = D.word64
 
 -- Int8s are written as a single byte.
 instance Binary Int8 where
     {-# INLINE encode #-}
     encode     = int8
+    {-# INLINE decode #-}
+    decode = D.int8
 
 -- Int16s are written as a 2 bytes in big endian format
 instance Binary Int16 where
     {-# INLINE encode #-}
     encode     = int16
+    {-# INLINE decode #-}
+    decode = D.int16
 
 -- Int32s are written as a 4 bytes in big endian format
 instance Binary Int32 where
     {-# INLINE encode #-}
     encode     = int32
+    {-# INLINE decode #-}
+    decode = D.int32
 
 -- Int64s are written as a 8 bytes in big endian format
 instance Binary Int64 where
     {-# INLINE encode #-}
     encode     = int64
+    {-# INLINE decode #-}
+    decode = D.int64
 
 ------------------------------------------------------------------------
 
@@ -135,11 +171,15 @@ instance Binary Int64 where
 instance Binary Word where
     {-# INLINE encode #-}
     encode   = word
+    {-# INLINE decode #-}
+    decode = D.word
 
 -- Ints are are written as Int64s, that is, 8 bytes in big endian format
 instance Binary Int where
     {-# INLINE encode #-}
     encode  = int
+    {-# INLINE decode #-}
+    decode = D.int
 
 instance Binary Integer where
     {-# INLINE encode #-}
@@ -147,27 +187,35 @@ instance Binary Integer where
 
 instance (Binary a, Integral a) => Binary (R.Ratio a) where
     {-# INLINE encode #-}
-    encode = \r -> encode (R.numerator r) <> encode (R.denominator r)
+    encode = \r -> encode (R.numerator r, R.denominator r)
 
 instance Binary Char where
     {-# INLINE encode #-}
     encode = char
+    {-# INLINE decode #-}
+    decode = D.char
 
 instance (Binary a, Binary b) => Binary (a,b) where
     {-# INLINE encode #-}
     encode (a,b) = encode a <> encode b
+    {-# INLINE decode #-}
+    decode = (,) <$> decode <*> decode
 
 instance (Binary a, Binary b, Binary c) => Binary (a,b,c) where
     {-# INLINE encode #-}
     encode (a,b,c) = encode a <> encode b <> encode c
+    {-# INLINE decode #-}
+    decode = (,,) <$> decode <*> decode <*> decode
 
 instance (Binary a, Binary b, Binary c, Binary d)
         => Binary (a,b,c,d) where
     encode (a,b,c,d) = encode a <> encode b <> encode c <> encode d
+    decode = (,,,) <$> decode <*> decode <*> decode <*> decode
 
 instance (Binary a, Binary b, Binary c, Binary d, Binary e)
         => Binary (a,b,c,d,e) where
     encode (a,b,c,d,e) = encode a <> encode b <> encode c <> encode d <> encode e
+    decode = (,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode
 
 -- 
 -- and now just recurse:
@@ -177,27 +225,32 @@ instance (Binary a, Binary b, Binary c, Binary d, Binary e
          , Binary f)
         => Binary (a,b,c,d,e,f) where
     encode (a,b,c,d,e,f) = encode a <> encode b <> encode c <> encode d <> encode e <> encode f
+    decode = (,,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode <*> decode
  
 
 instance (Binary a, Binary b, Binary c, Binary d, Binary e
          , Binary f, Binary g)
         => Binary (a,b,c,d,e,f,g) where
     encode (a,b,c,d,e,f,g) = encode a <> encode b <> encode c <> encode d <> encode e <> encode f <> encode g
+    decode = (,,,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode
 
 instance (Binary a, Binary b, Binary c, Binary d, Binary e,
           Binary f, Binary g, Binary h)
         => Binary (a,b,c,d,e,f,g,h) where
     encode (a,b,c,d,e,f,g,h) = encode a <> encode b <> encode c <> encode d <> encode e <> encode f <> encode g <> encode h
+    decode = (,,,,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode
 
 instance (Binary a, Binary b, Binary c, Binary d, Binary e,
           Binary f, Binary g, Binary h, Binary i)
         => Binary (a,b,c,d,e,f,g,h,i) where
     encode (a,b,c,d,e,f,g,h,i) = encode a <> encode b <> encode c <> encode d <> encode e <> encode f <> encode g <> encode h <> encode i
+    decode = (,,,,,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode
 
 instance (Binary a, Binary b, Binary c, Binary d, Binary e,
           Binary f, Binary g, Binary h, Binary i, Binary j)
         => Binary (a,b,c,d,e,f,g,h,i,j) where
     encode (a,b,c,d,e,f,g,h,i,j) = encode a <> encode b <> encode c <> encode d <> encode e <> encode f <> encode g <> encode h <> encode i <> encode j
+    decode = (,,,,,,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode
 
 ------------------------------------------------------------------------
 -- Container types
@@ -213,14 +266,20 @@ encodeList f = (<> word8 0) . foldMap ((word8 1 <>) . f)
 instance Binary a => Binary [a] where
     {-# INLINE encode #-}
     encode = encodeList encode
+    {-# INLINE decode #-}
+    decode = D.decodeList decode
 
 instance (Binary a) => Binary (Maybe a) where
     {-# INLINE encode #-}
     encode = maybe (word8 0) ((word8 1 <>) . encode)
+    {-# INLINE decode #-}
+    decode = D.decodeMaybe decode
 
 instance (Binary a, Binary b) => Binary (Either a b) where
     {-# INLINE encode #-}
     encode = either ((word8 0 <>) . encode) ((word8 1 <>) . encode)
+    {-# INLINE decode #-}
+    decode = D.decodeEither decode decode
 
 ------------------------------------------------------------------------
 -- ByteStrings (have specially efficient instances)
@@ -228,9 +287,16 @@ instance (Binary a, Binary b) => Binary (Either a b) where
 instance Binary S.ByteString where
     {-# INLINE encode #-}
     encode = \bs -> int (S.length bs) <> byteString bs
+    {-# INLINE decode #-}
+    decode = D.int >>= D.byteStringSlice
 
 instance Binary L.ByteString where
     encode = (<> int 0) . L.foldrChunks (\bs s -> encode bs <> s) mempty
+    decode = do
+      bs <- decode
+      if S.null bs 
+        then return L.Empty
+        else L.Chunk bs <$> decode
 
 ------------------------------------------------------------------------
 -- Maps and Sets
@@ -238,18 +304,26 @@ instance Binary L.ByteString where
 instance (Ord a, Binary a) => Binary (Set.Set a) where
     {-# INLINE encode #-}
     encode = encode . Set.toAscList
+    {-# INLINE decode #-}
+    decode = Set.fromAscList <$> decode
 
 instance (Ord k, Binary k, Binary e) => Binary (Map.Map k e) where
     {-# INLINE encode #-}
     encode = encode . Map.toAscList
+    {-# INLINE decode #-}
+    decode = Map.fromAscList <$> decode
 
 instance Binary IntSet.IntSet where
     {-# INLINE encode #-}
     encode = encode . IntSet.toAscList
+    {-# INLINE decode #-}
+    decode = IntSet.fromAscList <$> decode
 
 instance (Binary e) => Binary (IntMap.IntMap e) where
     {-# INLINE encode #-}
     encode = encode . IntMap.toAscList
+    {-# INLINE decode #-}
+    decode = IntMap.fromAscList <$> decode
 
 ------------------------------------------------------------------------
 -- Queues and Sequences
@@ -257,6 +331,16 @@ instance (Binary e) => Binary (IntMap.IntMap e) where
 instance (Binary e) => Binary (Seq.Seq e) where
     {-# INLINE encode #-}
     encode = \s -> int (Seq.length s) <> foldMap encode s
+    {-# INLINE decode #-}
+    decode = do
+        D.int >>= go Seq.empty
+      where
+        go !s !len
+          | len <= 0  = return s
+          | otherwise = do
+              x <- decode
+              go (s Seq.|> x) (len - 1)
+
 
 ------------------------------------------------------------------------
 -- Floating point
@@ -264,10 +348,14 @@ instance (Binary e) => Binary (Seq.Seq e) where
 instance Binary Double where
     {-# INLINE encode #-}
     encode = double
+    {-# INLINE decode #-}
+    decode = D.double
 
 instance Binary Float where
     {-# INLINE encode #-}
     encode = float
+    {-# INLINE decode #-}
+    decode = D.float
 
 ------------------------------------------------------------------------
 -- Trees
@@ -279,16 +367,28 @@ instance (Binary e) => Binary (T.Tree e) where
       where 
         go (T.Node x cs) = encode x <> encodeList go cs
 
+    {-# INLINE decode #-}
+    decode = 
+        go
+      where
+        go = T.Node <$> decode <*> D.decodeList go
+
+
 ------------------------------------------------------------------------
 -- Arrays
 
 instance (Binary i, Ix i, Binary e) => Binary (Array i e) where
     {-# INLINE encode #-}
     encode = \a -> encode (bounds a) <> encode (elems a)
+    {-# INLINE decode #-}
+    decode = listArray <$> decode <*> decode
+
 --
 -- The IArray UArray e constraint is non portable. Requires flexible instances
 --
 instance (Binary i, Ix i, Binary e, IArray UArray e) => Binary (UArray i e) where
     {-# INLINE encode #-}
     encode = \a -> encode (bounds a) <> encode (elems a)
+    {-# INLINE decode #-}
+    decode = listArray <$> decode <*> decode
 

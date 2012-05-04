@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns, OverloadedStrings #-}
+{-# LANGUAGE CPP, BangPatterns, OverloadedStrings #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Data.Blaze.Binary.Encoding
@@ -65,10 +65,14 @@ import           Data.Word
 import           Data.Int
 import           Foreign.Ptr
 
+#if __GLASGOW_HASKELL__ < 704
+
 infixr 6 <>
 
 (<>) :: Monoid m => m -> m -> m
 (<>) = mappend
+
+#endif
 
 ------------------------------------------------------------------------
 
