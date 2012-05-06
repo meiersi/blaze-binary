@@ -15,7 +15,7 @@ import           Criterion.Main
 import           Control.DeepSeq
 
 import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
-import qualified Data.Blaze.Binary.Decoding  as Blaze (Decoder, word8s, word8sSimple, runDecoder)
+import qualified Data.Blaze.Binary.PDecoding  as Blaze (Decoder, runDecoder)
 import qualified Data.ByteString             as S
 import qualified Data.ByteString.Internal    as S
 import qualified Data.ByteString.Lazy        as L
@@ -109,12 +109,12 @@ main = Criterion.Main.defaultMain $
         , bench "cereal" $ nf (decodeLazy :: L.ByteString -> Either String a) (encodeLazy $ f x)
         , bench "binary" $ nf (Binary.decode :: L.ByteString -> a) (Binary.encode $ f  x)
         ]
-      , bgroup "encode"
-        [ bench "blaze-binary" $ nf (L.length . Blaze.toLazyByteString . f) x
-        -- , bench "blaze-binary tagged" $ whnf (L.length . renderTagged . Blaze.encode . f) x andrea
-        , bench "cereal" $ nf (L.length . encodeLazy . f)  x
-        , bench "binary" $ nf (L.length . Binary.encode . f) x
-        ]
+     -- , bgroup "encode"
+     --   [ bench "blaze-binary" $ nf (L.length . Blaze.toLazyByteString . f) x
+     --   -- , bench "blaze-binary tagged" $ whnf (L.length . renderTagged . Blaze.encode . f) x andrea
+     --   , bench "cereal" $ nf (L.length . encodeLazy . f)  x
+     --   , bench "binary" $ nf (L.length . Binary.encode . f) x
+     --   ]
       ]
 
 -- | Testing the new binary encoding format.
