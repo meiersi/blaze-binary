@@ -16,7 +16,7 @@ import           Control.DeepSeq
 
 import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
 import qualified Data.Blaze.Binary.Decoding       as Blaze (Decoder, runDecoder)
-import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s)
+import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s, string)
 import qualified Data.ByteString             as S
 import qualified Data.ByteString.Internal    as S
 import qualified Data.ByteString.Lazy        as L
@@ -40,7 +40,7 @@ import qualified Data.Foldable as F (toList)
 
 -- | The number of repetitions to consider.
 nRepl :: Int
-nRepl = 1000
+nRepl = 10000
 
 -- We use NOINLINE to ensure that GHC has no chance of optimizing too much.
 
@@ -76,13 +76,26 @@ testValue n = replicate n $ Just
 word8Data :: Int -> [Word8]
 word8Data n = take n $ cycle [(0::Word8)..]
 
+charData :: Int -> String
+charData n = take n ['\0'..]
+
 -- benchmarks
 -------------
 
 main :: IO ()
 main = Criterion.Main.defaultMain $ 
     [ bgroup ("decode (" ++ show nRepl ++ ")")
-       [ bench "param-blaze-binary: word8s" $ nf 
+       [ bench "param-blaze-binary: string" $ nf 
+           (benchParamDecoder ParamBlaze.string) 
+           (Blaze.toByteString $ charData nRepl)
+       , bench "blaze-binary: string" $ nf 
+           (benchDecoder (Blaze.decode :: Blaze.Decoder String))
+           (Blaze.toByteString $ charData nRepl)
+    --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
+    --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
+       , bench "binary: string" $ nf (Binary.decode :: L.ByteString -> String) (Binary.encode $ charData nRepl)
+        
+       , bench "param-blaze-binary: word8s" $ nf 
            (benchParamDecoder ParamBlaze.word8s) 
            (Blaze.toByteString $ word8Data nRepl)
        , bench "blaze-binary: word8s" $ nf 
