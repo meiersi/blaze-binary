@@ -30,38 +30,128 @@ import GHC.Exts
 import GHC.IO (IO(IO))
 import Foreign 
 
-data ParseException = ParseException String -- {-# UNPACK #-} !(Ptr Word8)
+
+------------------------------------------------------------------------------
+-- Decoding exceptions
+------------------------------------------------------------------------------
+
+-- | Extract the 'Addr#' from a 'Ptr'.
+{-# INLINE getPtr #-}
+getPtr :: Ptr a -> Addr#
+getPtr (Ptr p) = p
+
+-- | Extract an 'IO' operation to its primtive representation.
+{-# INLINE runIO #-}
+runIO :: IO a -> State# RealWorld -> (# State# RealWorld, a #)
+runIO (IO io) = io
+
+------------------------------------------------------------------------------
+-- Decoding exceptions
+------------------------------------------------------------------------------
+
+-- | Internally, we use 'DecodingException' to report failed parses. This
+-- allows us to write the succeeding parsing code, as if there would be no
+-- failure. This works well, as we currently focus on parsing consecutive
+-- chunks of memory. Note that copying the whole input once to make it
+-- consecutive is very likely less effort than all the parameter copying
+-- necessitated by having an interruptible parser.
+data DecodingException = DecodingException String (Ptr Word8)
   deriving( Show, Typeable )
 
-instance Exception ParseException where
+instance Exception DecodingException where
 
-data PrimDecoders = PD {
-       pdWord8      :: Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Ptr Word8, Word# #)
-     , pdWord16     :: D.Decoder Word16
-     , pdWord32     :: D.Decoder Word32
-     , pdWord64     :: D.Decoder Word64
-     , pdWord       :: D.Decoder Word
-     , pdInt8       :: D.Decoder Int8
-     , pdInt16      :: D.Decoder Int16
-     , pdInt32      :: D.Decoder Int32
-     , pdInt64      :: D.Decoder Int64
-     , pdInt        :: D.Decoder Int
-     , pdFloat      :: D.Decoder Float
-     , pdDouble     :: D.Decoder Double
-     , pdChar       :: D.Decoder Char
-     , pdByteString :: Int -> D.Decoder S.ByteString
+------------------------------------------------------------------------------
+-- Primitive decoders
+------------------------------------------------------------------------------
+
+-- We currently use a boxed pointer because that results in the 'stg_ap_pv'
+-- calling pattern, which is precompiled in contrast to the 'stg_ap_nv'
+-- calling pattern.
+
+type PrimDecoder a     = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, a       #)
+type PrimDecoderWord   = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Word#   #)
+type PrimDecoderInt    = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Int#    #)
+type PrimDecoderChar   = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Char#   #)
+type PrimDecoderFloat  = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Float#  #)
+type PrimDecoderDouble = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Double# #)
+
+-- | These are the decoders for extracting primitive values. They are all
+-- given
+data PrimDecoders = PrimDecoders {
+       pdWord8      :: PrimDecoderWord
+     , pdWord16     :: PrimDecoderWord
+     , pdWord32     :: PrimDecoderWord
+     , pdWord64     :: PrimDecoder Word64
+     , pdWord       :: PrimDecoderWord
+     , pdInt8       :: PrimDecoderInt
+     , pdInt16      :: PrimDecoderInt
+     , pdInt32      :: PrimDecoderInt
+     , pdInt64      :: PrimDecoder Int64
+     , pdInt        :: PrimDecoderInt
+     , pdFloat      :: PrimDecoderFloat
+     , pdDouble     :: PrimDecoderDouble
+     , pdChar       :: PrimDecoderChar
+     , pdByteString :: PrimDecoder S.ByteString
      }
+
+-- Prededefined primitive decoders
+----------------------------------
+
+-- FIXME: Make this code also works on big-endian machines.
+
+{-# INLINE decodersLE #-}
+decodersLE :: ForeignPtr Word8  -- ^ Pointer to the underlying buffer
+           -> Ptr Word8         -- ^ Pointer to first byte after the buffer
+           -> PrimDecoders
+decodersLE !fpbuf !ipe = 
+    PrimDecoders w8
+                 undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined
+  where
+    w8 ip0 s0 = case ip0 `plusPtr` sizeOf (undefined :: Word8) of
+      ip1 | ip1 <= ipe -> case runIO (peek ip0) s0 of
+                            (# s1, W8# w #) -> (# s1, getPtr ip1, w #)
+          | otherwise -> case runIO (throw (DecodingException "too few bytes" ip0)) s0 of
+                           -- unreachable, but makes the type checker happy.
+                            (# s1, W8# w #) -> (# s1, getPtr ip0, w #)
+
 
 
 ------------------------------------------------------------------------------
 -- Decoder
 ------------------------------------------------------------------------------
 
+-- | One decoding step. Note that we use a 'Ptr Word8' because the
+-- 'stg_ap_pnv' calling patterns is not precompiled in GHC.
+type DecodeStep a = 
+          Ptr Word8                         -- ^ Next byte to read
+       -> State# RealWorld                  -- ^ World state before
+       -> (# State# RealWorld, Addr#, a #)  
+       -- ^ World state, new next byte to read, and decoded value
+
+-- | A decoder for Haskell values.
 newtype Decoder a = Decoder { 
-          unDecoder :: PrimDecoders
-                    -> Ptr Word8
-                    -> State# RealWorld -> (# State# RealWorld, Ptr Word8, a #)
+          unDecoder :: PrimDecoders -> DecodeStep a
         }
+
+-- Utilities
+------------
+
+-- | Convert an 'IO' action to a 'Decoder' action.
+{-# INLINE ioToDecoder #-}
+ioToDecoder :: IO a -> Decoder a
+ioToDecoder (IO io) = Decoder $ \_ !(Ptr ip0) s0 -> case io s0 of
+    (# s1, x #) -> (# s1, ip0, x #)
+
+-- | A 'DecodeStep' that fails with the given message.
+failStep :: String -> DecodeStep a
+failStep msg ip0 s0 =
+    case runIO (throw (DecodingException msg ip0)) s0 of
+      -- unreachable, but makes the type checker happy.
+      (# s1, x #) -> (# s1, getPtr ip0, x #)
+
+
+-- Instances
+------------
 
 instance Functor Decoder where
     fmap f = \(Decoder io) -> Decoder $ \pd ip0 s0 -> 
@@ -70,22 +160,13 @@ instance Functor Decoder where
 
 instance Applicative Decoder where
     {-# INLINE pure #-}
-    pure x = Decoder $ \_ ip0 s0 -> (# s0, ip0, x #)
+    pure x = Decoder $ \_ !(Ptr ip0) s0 -> (# s0, ip0, x #)
 
     {-# INLINE (<*>) #-}
     Decoder fIO <*> Decoder xIO = Decoder $ \pd ip0 s0 ->
         case fIO pd ip0 s0 of
-          (# s1, ip1, f #) -> case xIO pd ip1 s1 of
+          (# s1, ip1, f #) -> case xIO pd (Ptr ip1) s1 of
             (# s2, ip2, x #) -> (# s2, ip2, f x #)
-
-{-# INLINE liftIO #-}
-liftIO :: IO a -> Decoder a
-liftIO (IO io) = Decoder $ \_ ip0 s0 -> case io s0 of
-  (# s1, x #) -> (# s1, ip0, x #)
-
-{-# INLINE runIO #-}
-runIO :: IO a -> State# RealWorld -> (# State# RealWorld, a #)
-runIO (IO io) = io
 
 instance Monad Decoder where
     {-# INLINE return #-}
@@ -94,10 +175,35 @@ instance Monad Decoder where
     {-# INLINE (>>=) #-}
     Decoder xIO >>= f = Decoder $ \pd ip0 s0 ->
         case xIO pd ip0 s0 of
-          (# s1, ip1, x #) -> unDecoder (f x) pd ip1 s1
+          (# s1, ip1, x #) -> unDecoder (f x) pd (Ptr ip1) s1
 
     {-# INLINE fail #-}
-    fail msg = liftIO $ throw $ ParseException msg
+    fail = Decoder . const . failStep
+
+
+-- Decoder execution
+--------------------
+
+-- | Execute a decoder on a strict 'S.ByteString'.
+runDecoder :: Decoder a -> S.ByteString -> Either String a
+runDecoder p (S.PS fpbuf off len) = S.inlinePerformIO $ do
+    withForeignPtr fpbuf $ \pbuf -> do
+        let !ip0 = pbuf `plusPtr` off
+            !ipe = ip0 `plusPtr` len
+            !pd  = decodersLE fpbuf ipe
+
+        (`catch` (handler ip0)) $ do
+            x <- IO $ \s0 -> case unDecoder p pd ip0 s0 of
+                               (# s1, _, x #) -> (# s1, x #)
+            return (Right x)
+  where
+    handler :: Ptr Word8 -> DecodingException -> IO (Either String a)
+    handler ip0 (DecodingException msg ip) = return $ Left $ 
+        msg ++ 
+        " (at byte " ++ show (ip `minusPtr` ip0) ++ " of " ++ show len ++ ")" 
+
+-- Decoder construction
+-----------------------
 
 
 {-
@@ -105,41 +211,19 @@ requires :: Int -> Decoder a -> Decoder a
 requires n p = Decoder $ \buf@(Buffer ip ipe) ->
     if ipe `minusPtr` ip >= n
       then unDecoder p buf
-      else throw $ ParseException $
+      else throw $ DecodingException $
              "required " ++ show n ++ 
              " bytes, but there are only " ++ show (ipe `minusPtr` ip) ++
              " bytes left."
 -}
 
 {-# INLINE prim #-}
-prim :: (PrimDecoders -> D.Decoder a) -> Decoder a
+prim :: b -> Decoder a
 prim = error "PDecoder: prim - implement"
   {- sel = Decoder $ \pd fpbuf ip0 ipe s0 ->
      D.unDecoder (sel pd) fpbuf ip0 ipe s0  -}
 
 
-runDecoder :: Decoder a -> S.ByteString -> Either String a
-runDecoder p (S.PS fpbuf off len) = S.inlinePerformIO $ do
-    withForeignPtr fpbuf $ \pbuf -> do
-        let !(Ptr ip0) = pbuf `plusPtr` off
-            !(Ptr ipe) = Ptr ip0 `plusPtr` len
-            pds = PD 
-                (\ !(Ptr ip1) s1 -> case D.unDecoder D.word8 fpbuf ip1 ipe s1 of
-                    (# s2, ip2, W8# w #) -> (# s2, Ptr ip2, w #)
-                )
-                D.word16 D.word32 D.word64 D.word
-                D.int8  D.int16  D.int32  D.int64  D.int
-                D.float D.double D.char
-                D.byteStringSlice
-        
-
-        (`catch` handler) $ do
-            x <- IO $ \s0 -> case unDecoder p pds (Ptr ip0) s0 of
-                               (# s1, _, x #) -> (# s1, x #)
-            return (Right x)
-  where
-    handler :: ParseException -> IO (Either String a)
-    handler (ParseException msg) = return $ Left msg
 
 -- Primitive parsers
 --------------------
@@ -150,7 +234,7 @@ word8 = Decoder $ \pd ip0 s0 -> case pdWord8 pd ip0 s0 of
 
 word8s = decodeList word8
 
-{-# NOINLINE decodeList #-}
+{-# INLINABLE decodeList #-}
 decodeList :: Decoder a -> Decoder [a]
 decodeList x = go
   where
@@ -205,9 +289,11 @@ float = prim pdFloat
 double :: Decoder Double
 double = prim pdDouble
 
+{-
 {-# INLINE byteString #-}
 byteString :: Int -> Decoder S.ByteString
 byteString = \len -> prim (`pdByteString` len)
+-}
 
 char :: Decoder Char
 char = prim pdChar

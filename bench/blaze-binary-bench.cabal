@@ -25,3 +25,4 @@ executable blaze-binary-bench
                    , binary     == 0.5.*
                    , bytestring-builder == 0.1.*
                    , deepseq    == 1.2.*
+                   , primitive  == 0.4.*
