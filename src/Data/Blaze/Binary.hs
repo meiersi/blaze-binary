@@ -23,7 +23,7 @@ module Data.Blaze.Binary (
 import Control.Applicative
 
 import Data.Blaze.Binary.Encoding
-import qualified Data.Blaze.Binary.PDecoding as D
+import qualified Data.Blaze.Binary.Decoding as D
 
 import Data.Word
 import Data.Monoid
@@ -288,7 +288,7 @@ instance Binary S.ByteString where
     {-# INLINE encode #-}
     encode = \bs -> int (S.length bs) <> byteString bs
     {-# INLINE decode #-}
-    decode = D.int >>= D.byteString
+    decode = D.int >>= D.byteStringSlice
 
 instance Binary L.ByteString where
     encode = (<> int 0) . L.foldrChunks (\bs s -> encode bs <> s) mempty
