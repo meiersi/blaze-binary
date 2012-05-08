@@ -60,8 +60,6 @@ import GHC.Generics
 
 ------------------------------------------------------------------------
 
-type Encoding t = t -> VStream
-
 -- | If your compiler has support for the @DeriveGeneric@ and
 -- @DefaultSignatures@ language extensions (@ghc >= 7.2.1@), the 'encode' and 'get'
 -- methods will have default generic implementations.
