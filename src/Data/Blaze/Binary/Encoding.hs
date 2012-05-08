@@ -4,7 +4,7 @@
 -- Module      : Data.Blaze.Binary.Encoding
 -- Copyright   : 2012, Simon Meier <iridcode@gmail.com>
 -- License     : BSD3-style (see LICENSE)
--- 
+--
 -- Maintainer  : Simon Meier <iridcode@gmail.com>
 -- Stability   :
 -- Portability : portable
@@ -14,8 +14,10 @@
 -----------------------------------------------------------------------------
 module Data.Blaze.Binary.Encoding (
 
+      Encoding
+
     -- * Streams of values to be encoded
-      VStream
+    , VStream
     , render
     , renderTagged
     , renderTextualUtf8
@@ -42,7 +44,7 @@ module Data.Blaze.Binary.Encoding (
     , char
 
     , byteString
-    
+
     , builder
 
     , (<>)
@@ -96,6 +98,8 @@ data VStreamRep =
      | VBuilder                       !B.Builder    VStreamRep
      | VEmpty
 
+type Encoding t = t -> VStream
+
 -- | A stream of values to be encoded.
 newtype VStream = VStream { toVStreamRep :: VStreamRep -> VStreamRep }
 
@@ -123,8 +127,8 @@ render = renderWith
 -- | Binary encode a 'VStream' to a lazy bytestring 'B.Builder' using a tagged
 -- format that allows to reconstruct the value stream.
 renderTagged :: VStream -> L.ByteString
-renderTagged = 
-    B.toLazyByteString 
+renderTagged =
+    B.toLazyByteString
   . renderWith
       (tf 0 E.word8) (tf 1 E.word16LE) (tf 2 E.word32LE) (tf 3 E.word64LE) (tf 4 (fromIntegral E.>$< E.word64LE))
       (tf 5 E.int8)  (tf 6 E.int16LE)  (tf 7 E.int32LE)  (tf 8 E.int64LE)  (tf 9 (fromIntegral E.>$< E.int64LE))
@@ -154,7 +158,7 @@ renderWith w8 w16 w32 w64 w i8 i16 i32 i64 i c f d ibig bs b =
     -- take care that inlining is possible once all encodings are fixed
     \vs0 -> B.builder $ step (toVStreamRep vs0 VEmpty)
   where
-    step vs1 k (B.BufferRange op0 ope0) = 
+    step vs1 k (B.BufferRange op0 ope0) =
         go vs1 op0
       where
         go vs !op
@@ -194,7 +198,7 @@ renderTextualUtf8 vs0 =
     go (VWord8 1 (VChar x vs)) = line "w8,c  1," (B.charUtf8 x) vs
     go (VWord8 1 (VWord x vs)) = line "w8,w  1," (B.wordDec x)  vs
     go (VWord8 1 (VInt  x vs)) = line "w8,i  1," (B.intDec x)   vs
-    go (VInt l (VByteString x vs))           
+    go (VInt l (VByteString x vs))
       | l > 0                  = line "i,bs  " (B.intDec l <> B.char8 ',' <> B.byteStringHexFixed x) vs
     go (VWord8  x vs)          = line "w8    " (B.word8Dec x)  vs
     go (VWord16 x vs)          = line "w16   " (B.word16Dec x) vs
@@ -221,67 +225,65 @@ renderTextualUtf8 vs0 =
 ------------------------------
 
 {-# INLINE float #-}
-float :: Float -> VStream
+float :: Encoding Float
 float = VStream . VFloat
 
 {-# INLINE double #-}
-double :: Double -> VStream
+double :: Encoding Double
 double = VStream . VDouble
 
 {-# INLINE integer #-}
-integer :: Integer -> VStream
+integer :: Encoding Integer
 integer = VStream . VInteger
 
 {-# INLINE word #-}
-word :: Word -> VStream
+word :: Encoding Word
 word = VStream . VWord
 
 {-# INLINE word8 #-}
-word8 :: Word8 -> VStream
+word8 :: Encoding Word8
 word8 = VStream . VWord8
 
 {-# INLINE word16 #-}
-word16 :: Word16 -> VStream
+word16 :: Encoding Word16
 word16 = VStream . VWord16
 
 {-# INLINE word32 #-}
-word32 :: Word32 -> VStream
+word32 :: Encoding Word32
 word32 = VStream . VWord32
 
 {-# INLINE word64 #-}
-word64 :: Word64 -> VStream
+word64 :: Encoding Word64
 word64 = VStream . VWord64
 
 {-# INLINE int #-}
-int :: Int -> VStream
+int :: Encoding Int
 int = VStream . VInt
 
 {-# INLINE int8 #-}
-int8 :: Int8 -> VStream
+int8 :: Encoding Int8
 int8 = VStream . VInt8
 
 {-# INLINE int16 #-}
-int16 :: Int16 -> VStream
+int16 :: Encoding Int16
 int16 = VStream . VInt16
 
 {-# INLINE int32 #-}
-int32 :: Int32 -> VStream
+int32 :: Encoding Int32
 int32 = VStream . VInt32
 
 {-# INLINE int64 #-}
-int64 :: Int64 -> VStream
+int64 :: Encoding Int64
 int64 = VStream . VInt64
 
 {-# INLINE char #-}
-char :: Char -> VStream
+char :: Encoding Char
 char = VStream . VChar
 
 {-# INLINE byteString #-}
-byteString :: S.ByteString -> VStream
+byteString :: Encoding S.ByteString
 byteString = VStream . VByteString
 
 {-# INLINE builder #-}
-builder :: B.Builder -> VStream
+builder :: Encoding B.Builder
 builder = VStream . VBuilder
-
-
