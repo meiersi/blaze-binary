@@ -339,7 +339,7 @@ word8s = decodeList word8
 
 string = decodeList char
 
-{-# INLINABLE decodeList #-}
+{-# NOINLINE decodeList #-}
 decodeList :: Decoder a -> Decoder [a]
 decodeList x = go
   where

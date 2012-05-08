@@ -34,7 +34,8 @@ data ParseException = ParseException String -- {-# UNPACK #-} !(Ptr Word8)
 instance Exception ParseException where
 
 newtype Decoder a = Decoder { 
-          unDecoder :: ForeignPtr Word8 -> Addr# -> Addr# 
+          -- unDecoder :: ForeignPtr Word8 -> Addr# -> Addr# 
+          unDecoder :: ForeignPtr Word8 -> Ptr Word8 -> Ptr Word8
                     -> State# RealWorld -> (# State# RealWorld, Addr#, a #)
         }
 
@@ -45,17 +46,17 @@ instance Functor Decoder where
 
 instance Applicative Decoder where
     {-# INLINE pure #-}
-    pure x = Decoder $ \_ ip0 _ s0 -> (# s0, ip0, x #)
+    pure x = Decoder $ \_ ip0 _ s0 -> (# s0, getAddr ip0, x #)
 
     {-# INLINE (<*>) #-}
     Decoder fIO <*> Decoder xIO = Decoder $ \fpbuf ip0 ipe s0 ->
         case fIO fpbuf ip0 ipe s0 of
-          (# s1, ip1, f #) -> case xIO fpbuf ip1 ipe s1 of
+          (# s1, ip1, f #) -> case xIO fpbuf (Ptr ip1) ipe s1 of
             (# s2, ip2, x #) -> (# s2, ip2, f x #)
 
 {-# INLINE liftIO #-}
 liftIO :: IO a -> Decoder a
-liftIO (IO io) = Decoder $ \_ ip0 _ s0 -> case io s0 of
+liftIO (IO io) = Decoder $ \_ !(Ptr ip0) _ s0 -> case io s0 of
   (# s1, x #) -> (# s1, ip0, x #)
 
 {-# INLINE runIO #-}
@@ -69,7 +70,7 @@ instance Monad Decoder where
     {-# INLINE (>>=) #-}
     Decoder xIO >>= f = Decoder $ \fpbuf ip0 ipe s0 ->
         case xIO fpbuf ip0 ipe s0 of
-          (# s1, ip1, x #) -> unDecoder (f x) fpbuf ip1 ipe s1
+          (# s1, ip1, x #) -> unDecoder (f x) fpbuf (Ptr ip1) ipe s1
 
     {-# INLINE fail #-}
     fail msg = liftIO $ throw $ ParseException msg
@@ -89,21 +90,21 @@ requires n p = Decoder $ \buf@(Buffer ip ipe) ->
 {-# INLINE storable #-}
 storable :: forall a. Storable a => Decoder a
 storable = Decoder $ \fpbuf ip0 ipe s0 ->
-    let ip1 = plusAddr# ip0 size in 
-      if Ptr ip1 <= Ptr ipe
-        then case runIO (peek (Ptr ip0)) s0 of
-               (# s1, x #) -> (# s1, ip1, x #)
+    let ip1 = ip0 `plusPtr` size in 
+      if ip1 <= ipe
+        then case runIO (peek (castPtr ip0 :: Ptr a)) s0 of
+               (# s1, x #) -> (# s1, getAddr ip1, x #)
         else unDecoder 
-                (fail $ "less than the required " ++ show (I# size) ++ " bytes left.")
+                (fail $ "less than the required " ++ show size ++ " bytes left.")
                 fpbuf ip0 ipe s0
   where
-    !(I# size) = sizeOf (undefined :: a)
+    size = sizeOf (undefined :: a)
 
 runDecoder :: Decoder a -> S.ByteString -> Either String a
 runDecoder p (S.PS fpbuf off len) = S.inlinePerformIO $ do
     withForeignPtr fpbuf $ \pbuf -> do
-        let !(Ptr ip)  = pbuf `plusPtr` off
-            !(Ptr ipe) = Ptr ip `plusPtr` len
+        let !ip  = pbuf `plusPtr` off
+            !ipe = ip `plusPtr` len
         (`catch` handler) $ do
             x <- IO $ \s0 -> case unDecoder p fpbuf ip ipe s0 of
                                (# s1, _, x #) -> (# s1, x #)
@@ -166,12 +167,12 @@ double = storable
 {-# INLINE byteStringSlice #-}
 byteStringSlice :: Int -> Decoder S.ByteString
 byteStringSlice len = Decoder $ \fpbuf ip0 ipe s0 ->
-    let ip1 = Ptr ip0 `plusPtr` len
+    let ip1 = ip0 `plusPtr` len
     in 
-      if ip1 <= Ptr ipe
+      if ip1 <= ipe
         then (# s0
              , getAddr ip1
-             ,  S.PS fpbuf (Ptr ip0 `minusPtr` unsafeForeignPtrToPtr fpbuf) len
+             ,  S.PS fpbuf (ip0 `minusPtr` unsafeForeignPtrToPtr fpbuf) len
              #)
         else unDecoder 
                 (fail $ "less than the required " ++ show len ++ " bytes left.")
