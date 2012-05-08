@@ -61,12 +61,12 @@ import GHC.Generics
 ------------------------------------------------------------------------
 
 -- | If your compiler has support for the @DeriveGeneric@ and
--- @DefaultSignatures@ language extensions (@ghc >= 7.2.1@), the 'encode' and 'get'
+-- @DefaultSignatures@ language extensions (@ghc >= 7.2.1@), the 'encode' and 'decode'
 -- methods will have default generic implementations.
 --
 -- To use this option, simply add a @deriving 'Generic'@ clause to your datatype
 -- and declare a 'Binary' instance for it without giving a definition for
--- 'encode' and 'get'.
+-- 'encode' and 'decode'.
 class Binary t where
     -- | Encode a value in the Put monad.
     encode :: Encoding t
@@ -415,7 +415,7 @@ instance (Binary i, Ix i, Binary e, IArray UArray e) => Binary (UArray i e) wher
 
 #ifdef GENERICS
 ------------------------------------------------------------------------
--- Generic Serialze
+-- Generic Binary
 
 class GBinary f where
     gEncode :: Encoding  (f a)
@@ -434,8 +434,8 @@ instance Binary a => GBinary (K1 i a) where
     {-# INLINE gDecode #-}
 
 instance GBinary U1 where
-    gEncode _ = mempty
-    gDecode   = pure U1
+    gEncode = const mempty
+    gDecode = pure U1
     {-# INLINE gEncode #-}
     {-# INLINE gDecode #-}
 
@@ -480,31 +480,31 @@ class EncodeSum f where
     encodeSum :: (Num word, Bits word, Binary word) => word -> word -> Encoding (f a)
 
 instance (EncodeSum a, EncodeSum b, GBinary a, GBinary b) => EncodeSum (a :+: b) where
-    encodeSum !code !size s = case s of
-                                L1 x -> encodeSum code           sizeL x
-                                R1 x -> encodeSum (code + sizeL) sizeR x
+    encodeSum !tag !size s = case s of
+                               L1 x -> encodeSum tag           sizeL x
+                               R1 x -> encodeSum (tag + sizeL) sizeR x
         where
           sizeL = size `shiftR` 1
           sizeR = size - sizeL
     {-# INLINE encodeSum #-}
 
 instance GBinary a => EncodeSum (C1 c a) where
-    encodeSum !code _ x = encode code <> gEncode x
+    encodeSum !tag _ x = encode tag <> gEncode x
     {-# INLINE encodeSum #-}
 
 ------------------------------------------------------------------------
 
 checkDecodeSum :: (Ord word, Bits word, DecodeSum f) => word -> word -> D.Decoder (f a)
-checkDecodeSum size code | code < size = decodeSum code size
-                         | otherwise   = fail "Unknown encoding for constructor"
+checkDecodeSum size tag | tag < size = decodeSum tag size
+                        | otherwise  = fail "Unknown encoding for constructor"
 {-# INLINE checkDecodeSum #-}
 
 class DecodeSum f where
     decodeSum :: (Ord word, Num word, Bits word) => word -> word -> D.Decoder (f a)
 
 instance (DecodeSum a, DecodeSum b, GBinary a, GBinary b) => DecodeSum (a :+: b) where
-    decodeSum !code !size | code < sizeL = L1 <$> decodeSum code           sizeL
-                          | otherwise    = R1 <$> decodeSum (code - sizeL) sizeR
+    decodeSum !tag !size | tag < sizeL = L1 <$> decodeSum tag           sizeL
+                         | otherwise   = R1 <$> decodeSum (tag - sizeL) sizeR
         where
           sizeL = size `shiftR` 1
           sizeR = size - sizeL
@@ -524,7 +524,9 @@ newtype Tagged (s :: * -> *) b = Tagged {unTagged :: b}
 instance (SumSize a, SumSize b) => SumSize (a :+: b) where
     sumSize = Tagged $ unTagged (sumSize :: Tagged a Word64) +
                        unTagged (sumSize :: Tagged b Word64)
+    {-# INLINE sumSize #-}
 
 instance SumSize (C1 c a) where
     sumSize = Tagged 1
+    {-# INLINE sumSize #-}
 #endif
