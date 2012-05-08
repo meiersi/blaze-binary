@@ -11,7 +11,7 @@ cabal-version:          >= 1.6
 synopsis:               A binary serialization library
 
 description:
-  A binary serialization library, similar to binary and cereal, 
+  A binary serialization library, similar to binary and cereal,
   but with better performance and support for inspecting the primitive stream
   of values representing an encoded Haskell value.
 
@@ -41,3 +41,6 @@ library
 
         ghc-options:            -Wall
         ghc-prof-options:       -prof -auto-all
+
+        if impl(ghc >= 7.2.1)
+            cpp-options: -DGENERICS
