@@ -1,10 +1,20 @@
-{-# LANGUAGE BangPatterns, FlexibleContexts, FlexibleInstances #-}
+{-# LANGUAGE CPP, BangPatterns, FlexibleContexts, FlexibleInstances #-}
+
+#ifdef GENERICS
+{-# LANGUAGE DefaultSignatures
+           , TypeOperators
+           , BangPatterns
+           , KindSignatures
+           , ScopedTypeVariables
+  #-}
+#endif
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Data.Blaze.Binary
 -- Copyright   : 2012, Simon Meier <iridcode@gmail.com>
 -- License     : BSD3-style (see LICENSE)
--- 
+--
 -- Maintainer  : Simon Meier <iridcode@gmail.com>
 -- Stability   :
 -- Portability :
@@ -44,6 +54,9 @@ import qualified Data.Ratio                    as R
 import qualified Data.Tree                     as T
 import qualified Data.Sequence                 as Seq
 
+#ifdef GENERICS
+import GHC.Generics
+#endif
 
 ------------------------------------------------------------------------
 
@@ -60,6 +73,14 @@ class Binary t where
     -- | Encode a value in the Put monad.
     encode :: Encoding t
     decode :: D.Decoder t
+
+#ifdef GENERICS
+    default encode :: (Generic t, GBinary (Rep t)) => Encoding t
+    encode = gEncode . from
+
+    default decode :: (Generic t, GBinary (Rep t)) => D.Decoder t
+    decode = to <$> gDecode
+#endif
 
 -- | Encode a value to a strict 'S.ByteString'.
 toByteString :: Binary t => t -> S.ByteString
@@ -89,8 +110,8 @@ instance Binary () where
 instance Binary Bool where
     {-# INLINE encode #-}
     encode = \x -> word8 (if x then 1 else 0)
-    decode = do tag <- D.word8 
-                case tag of 
+    decode = do tag <- D.word8
+                case tag of
                   0 -> return False
                   1 -> return True
                   _ -> wrongTag "Bool" tag
@@ -99,8 +120,8 @@ instance Binary Bool where
 instance Binary Ordering where
     {-# INLINE encode #-}
     encode = \x -> word8 (case x of LT -> 0; EQ -> 1; GT -> 2)
-    decode = do tag <- D.word8 
-                case tag of 
+    decode = do tag <- D.word8
+                case tag of
                   0 -> return LT
                   1 -> return EQ
                   2 -> return GT
@@ -184,10 +205,12 @@ instance Binary Int where
 instance Binary Integer where
     {-# INLINE encode #-}
     encode = integer
+    decode = error "TODO: decode Integer!"
 
 instance (Binary a, Integral a) => Binary (R.Ratio a) where
     {-# INLINE encode #-}
     encode = \r -> encode (R.numerator r, R.denominator r)
+    decode = error "TODO: decode Ratio!"
 
 instance Binary Char where
     {-# INLINE encode #-}
@@ -217,7 +240,7 @@ instance (Binary a, Binary b, Binary c, Binary d, Binary e)
     encode (a,b,c,d,e) = encode a <> encode b <> encode c <> encode d <> encode e
     decode = (,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode
 
--- 
+--
 -- and now just recurse:
 --
 
@@ -226,7 +249,7 @@ instance (Binary a, Binary b, Binary c, Binary d, Binary e
         => Binary (a,b,c,d,e,f) where
     encode (a,b,c,d,e,f) = encode a <> encode b <> encode c <> encode d <> encode e <> encode f
     decode = (,,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode <*> decode
- 
+
 
 instance (Binary a, Binary b, Binary c, Binary d, Binary e
          , Binary f, Binary g)
@@ -294,7 +317,7 @@ instance Binary L.ByteString where
     encode = (<> int 0) . L.foldrChunks (\bs s -> encode bs <> s) mempty
     decode = do
       bs <- decode
-      if S.null bs 
+      if S.null bs
         then return L.Empty
         else L.Chunk bs <$> decode
 
@@ -364,11 +387,11 @@ instance (Binary e) => Binary (T.Tree e) where
     {-# INLINE encode #-}
     encode =
         go
-      where 
+      where
         go (T.Node x cs) = encode x <> encodeList go cs
 
     {-# INLINE decode #-}
-    decode = 
+    decode =
         go
       where
         go = T.Node <$> decode <*> D.decodeList go
@@ -392,3 +415,118 @@ instance (Binary i, Ix i, Binary e, IArray UArray e) => Binary (UArray i e) wher
     {-# INLINE decode #-}
     decode = listArray <$> decode <*> decode
 
+#ifdef GENERICS
+------------------------------------------------------------------------
+-- Generic Serialze
+
+class GBinary f where
+    gEncode :: Encoding  (f a)
+    gDecode :: D.Decoder (f a)
+
+instance GBinary a => GBinary (M1 i c a) where
+    gEncode = gEncode . unM1
+    gDecode = M1 <$> gDecode
+    {-# INLINE gEncode #-}
+    {-# INLINE gDecode #-}
+
+instance Binary a => GBinary (K1 i a) where
+    gEncode = encode . unK1
+    gDecode = K1 <$> decode
+    {-# INLINE gEncode #-}
+    {-# INLINE gDecode #-}
+
+instance GBinary U1 where
+    gEncode _ = mempty
+    gDecode   = pure U1
+    {-# INLINE gEncode #-}
+    {-# INLINE gDecode #-}
+
+instance (GBinary a, GBinary b) => GBinary (a :*: b) where
+    gEncode (a :*: b) = gEncode a <> gEncode b
+    gDecode = (:*:) <$> gDecode  <*> gDecode
+    {-# INLINE gEncode #-}
+    {-# INLINE gDecode #-}
+
+-- The following GBinary instance for sums has support for serializing types
+-- with up to 2^64-1 constructors. It will use the minimal number of bytes
+-- needed to encode the constructor. For example when a type has 2^8
+-- constructors or less it will use a single byte to encode the constructor. If
+-- it has 2^16 constructors or less it will use two bytes, and so on till 2^64-1.
+
+#define GUARD(WORD) (size - 1) <= fromIntegral (maxBound :: WORD)
+#define ENCODESUM(WORD) GUARD(WORD) = encodeSum (0 :: WORD) (fromIntegral size)
+#define DECODESUM(WORD) GUARD(WORD) = (decode :: D.Decoder WORD) >>= checkDecodeSum (fromIntegral size)
+
+instance ( EncodeSum a, EncodeSum b
+         , DecodeSum a, DecodeSum b
+         , GBinary   a, GBinary   b
+         , SumSize   a, SumSize   b) => GBinary (a :+: b) where
+    gEncode | ENCODESUM(Word8) | ENCODESUM(Word16) | ENCODESUM(Word32) | ENCODESUM(Word64)
+            | otherwise = sizeError "encode" size
+      where
+        size = unTagged (sumSize :: Tagged (a :+: b) Word64)
+
+    gDecode | DECODESUM(Word8) | DECODESUM(Word16) | DECODESUM(Word32) | DECODESUM(Word64)
+            | otherwise = sizeError "decode" size
+      where
+        size = unTagged (sumSize :: Tagged (a :+: b) Word64)
+    {-# INLINE gEncode #-}
+    {-# INLINE gDecode #-}
+
+sizeError :: Show size => String -> size -> error
+sizeError s size = error $ "Can't " ++ s ++ " a type with " ++ show size ++ " constructors"
+
+------------------------------------------------------------------------
+
+class EncodeSum f where
+    encodeSum :: (Num word, Bits word, Binary word) => word -> word -> Encoding (f a)
+
+instance (EncodeSum a, EncodeSum b, GBinary a, GBinary b) => EncodeSum (a :+: b) where
+    encodeSum !code !size s = case s of
+                                L1 x -> encodeSum code           sizeL x
+                                R1 x -> encodeSum (code + sizeL) sizeR x
+        where
+          sizeL = size `shiftR` 1
+          sizeR = size - sizeL
+    {-# INLINE encodeSum #-}
+
+instance GBinary a => EncodeSum (C1 c a) where
+    encodeSum !code _ x = encode code <> gEncode x
+    {-# INLINE encodeSum #-}
+
+------------------------------------------------------------------------
+
+checkDecodeSum :: (Ord word, Bits word, DecodeSum f) => word -> word -> D.Decoder (f a)
+checkDecodeSum size code | code < size = decodeSum code size
+                         | otherwise   = fail "Unknown encoding for constructor"
+{-# INLINE checkDecodeSum #-}
+
+class DecodeSum f where
+    decodeSum :: (Ord word, Num word, Bits word) => word -> word -> D.Decoder (f a)
+
+instance (DecodeSum a, DecodeSum b, GBinary a, GBinary b) => DecodeSum (a :+: b) where
+    decodeSum !code !size | code < sizeL = L1 <$> decodeSum code           sizeL
+                          | otherwise    = R1 <$> decodeSum (code - sizeL) sizeR
+        where
+          sizeL = size `shiftR` 1
+          sizeR = size - sizeL
+    {-# INLINE decodeSum #-}
+
+instance GBinary a => DecodeSum (C1 c a) where
+    decodeSum _ _ = gDecode
+    {-# INLINE decodeSum #-}
+
+------------------------------------------------------------------------
+
+class SumSize f where
+    sumSize :: Tagged f Word64
+
+newtype Tagged (s :: * -> *) b = Tagged {unTagged :: b}
+
+instance (SumSize a, SumSize b) => SumSize (a :+: b) where
+    sumSize = Tagged $ unTagged (sumSize :: Tagged a Word64) +
+                       unTagged (sumSize :: Tagged b Word64)
+
+instance SumSize (C1 c a) where
+    sumSize = Tagged 1
+#endif
