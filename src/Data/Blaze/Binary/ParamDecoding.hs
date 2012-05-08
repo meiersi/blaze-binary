@@ -68,10 +68,15 @@ instance Exception DecodingException where
 -- calling pattern, which is precompiled in contrast to the 'stg_ap_nv'
 -- calling pattern.
 
+-- Highly unsafe trick: primitive decoders are only called via an unknown call
+-- and never inlined. Pattern mathcing on their result makes sure that their
+-- evaluation took place. At least for the primitive ones that return unboxed
+-- values.
+
 type PrimDecoder a     = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, a       #)
-type PrimDecoderWord   = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Word#   #)
+type PrimDecoderWord   = Addr# -> (# Addr#, Word#   #)
 type PrimDecoderInt    = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Int#    #)
-type PrimDecoderChar   = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Char#   #)
+type PrimDecoderChar   = Addr# -> (# Addr#, Char#   #)
 type PrimDecoderFloat  = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Float#  #)
 type PrimDecoderDouble = Ptr Word8 -> State# RealWorld -> (# State# RealWorld, Addr#, Double# #)
 
@@ -128,18 +133,19 @@ decodersLE !fpbuf !ipe =
 
     {-# INLINE word #-}
     word :: forall a. Storable a => (Ptr a -> IO Word) -> PrimDecoderWord
-    word peekAt = \ip0 s0 -> 
-      case nextPtr ip0 of
-        ip1 | ip1 <= ipe -> case runIO (peekAt (castPtr ip0)) s0 of
-                              (# s1, W# x #) -> (# s1, getPtr ip1, x #)
+    word peekAt = \ip0a -> 
+      let ip0 = Ptr ip0a in
+      case nextPtr (castPtr ip0 :: Ptr a) of
+        ip1 | ip1 <= ipe -> case runIO (peekAt (castPtr ip0)) realWorld# of
+                              (# _, W# x #) -> (# getPtr ip1, x #)
             | otherwise -> 
-                case runIO (tooFewBytes ip0) s0 of
-                  (# s1, W# x #) -> (# s1, getPtr ip0, x #)
+                case runIO (tooFewBytes ip0) realWorld# of
+                  (# _, W# x #) -> (# getPtr ip0, x #)
 
     {-# INLINE int #-}
     int :: forall a. Storable a => (Ptr a -> IO Int) -> PrimDecoderInt
     int peekAt = \ip0 s0 -> 
-      case nextPtr ip0 of
+      case nextPtr (castPtr ip0 :: Ptr a) of
         ip1 | ip1 <= ipe -> case runIO (peekAt (castPtr ip0)) s0 of
                               (# s1, I# x #) -> (# s1, getPtr ip1, x #)
             | otherwise -> 
@@ -185,22 +191,22 @@ decodersLE !fpbuf !ipe =
 -}
 
     charUtf8 :: PrimDecoderChar
-    charUtf8 = \ip0 s0 -> 
+    charUtf8 = \ip0a -> let ip0 = Ptr ip0a in
       if ip0 < ipe then
-        case runIO (peek ip0) s0 of
+        case runIO (peek ip0) realWorld# of
           (# s1, w0 #) 
-            | w0 < 0x80 -> (# s1, getPtr (ip0 `plusPtr` 1), chr1 w0 #)
+            | w0 < 0x80 -> (# getPtr (ip0 `plusPtr` 1), chr1 w0 #)
 
             | w0 < 0xe0 && ip0 `plusPtr` 2 <= ipe -> 
                 case runIO (peekByteOff ip0 1) s1 of
                   (# s2, w1 #) ->
-                    (# s2, getPtr (ip0 `plusPtr` 2), chr2 w0 w1 #)
+                    (# getPtr (ip0 `plusPtr` 2), chr2 w0 w1 #)
 
             | w0 < 0xf0 && ip0 `plusPtr` 3 <= ipe -> 
                 case runIO (peekByteOff ip0 1) s1 of
                   (# s2, w1 #) -> case runIO (peekByteOff ip0 2) s2 of
                     (# s3, w2 #) ->
-                      (# s3, getPtr (ip0 `plusPtr` 3), chr3 w0 w1 w2 #)
+                      (# getPtr (ip0 `plusPtr` 3), chr3 w0 w1 w2 #)
 
             | ip0 `plusPtr` 4 <= ipe -> 
                 case runIO (peekByteOff ip0 1) s1 of
@@ -209,14 +215,14 @@ decodersLE !fpbuf !ipe =
                       (# s4, w3 #) -> 
                         let x = chr4 w0 w1 w2 w3 in 
                           if I# x <= 0x10ffff
-                            then (# s4, getPtr (ip0 `plusPtr` 4), chr# x #)
-                            else runIOChr ip0 (throw (DecodingException ("invalid Unicode codepoint: " ++ show (I# x)) ip0)) s4
+                            then (# getPtr (ip0 `plusPtr` 4), chr# x #)
+                            else runIOChr ip0 (throw (DecodingException ("invalid Unicode codepoint: " ++ show (I# x)) ip0))
 
-            | otherwise -> runIOChr ip0 (tooFewBytes ip0) s1
-        else runIOChr ip0 (tooFewBytes ip0) s0
+            | otherwise -> runIOChr ip0 (tooFewBytes ip0)
+        else runIOChr ip0 (tooFewBytes ip0)
       where
-        runIOChr ip io s0 = case runIO io s0 of
-          (# s1, C# c #) -> (# s1, getPtr ip, c #)
+        runIOChr ip io = case runIO io realWorld# of
+          (# s1, C# c #) -> (# getPtr ip, c #)
 
 
 ------------------------------------------------------------------------------
@@ -226,9 +232,8 @@ decodersLE !fpbuf !ipe =
 -- | One decoding step. Note that we use a 'Ptr Word8' because the
 -- 'stg_ap_pnv' calling patterns is not precompiled in GHC.
 type DecodeStep a = 
-          Ptr Word8                         -- ^ Next byte to read
-       -> State# RealWorld                  -- ^ World state before
-       -> (# State# RealWorld, Addr#, a #)  
+          Ptr Word8                           -- ^ Next byte to read
+       -> (# Addr#, a #)  
        -- ^ World state, new next byte to read, and decoded value
 
 -- | A decoder for Haskell values.
@@ -242,43 +247,44 @@ newtype Decoder a = Decoder {
 -- | Convert an 'IO' action to a 'Decoder' action.
 {-# INLINE ioToDecoder #-}
 ioToDecoder :: IO a -> Decoder a
-ioToDecoder (IO io) = Decoder $ \_ !(Ptr ip0) s0 -> case io s0 of
-    (# s1, x #) -> (# s1, ip0, x #)
+ioToDecoder (IO io) = Decoder $ \_ !(Ptr ip0) -> case io realWorld# of
+    (# _, x #) -> (# ip0, x #)
 
 -- | A 'DecodeStep' that fails with the given message.
 failStep :: String -> DecodeStep a
-failStep msg ip0 s0 =
-    case runIO (throw (DecodingException msg ip0)) s0 of
+failStep msg ip0 =
+    case runIO (throw (DecodingException msg ip0)) realWorld# of
       -- unreachable, but makes the type checker happy.
-      (# s1, x #) -> (# s1, getPtr ip0, x #)
+      (# _, x #) -> (# getPtr ip0, x #)
 
 
 -- Instances
 ------------
 
 instance Functor Decoder where
-    fmap f = \(Decoder io) -> Decoder $ \pd ip0 s0 -> 
-        case io pd ip0 s0 of
-            (# s1, ip1, x #) -> (# s1, ip1, f x #)
+    {-# INLINE fmap #-}
+    fmap = \f (Decoder io) -> Decoder $ \pd ip0 -> 
+        case io pd ip0 of
+            (# ip1, x #) -> (# ip1, f x #)
 
 instance Applicative Decoder where
     {-# INLINE pure #-}
-    pure x = Decoder $ \_ !(Ptr ip0) s0 -> (# s0, ip0, x #)
+    pure x = Decoder $ \_ ip0 -> (# getPtr ip0, x #)
 
     {-# INLINE (<*>) #-}
-    Decoder fIO <*> Decoder xIO = Decoder $ \pd ip0 s0 ->
-        case fIO pd ip0 s0 of
-          (# s1, ip1, f #) -> case xIO pd (Ptr ip1) s1 of
-            (# s2, ip2, x #) -> (# s2, ip2, f x #)
+    Decoder fIO <*> Decoder xIO = Decoder $ \pd ip0 ->
+        case fIO pd ip0 of
+          (# ip1, f #) -> case xIO pd (Ptr ip1) of
+            (# ip2, x #) -> (# ip2, f x #)
 
 instance Monad Decoder where
     {-# INLINE return #-}
     return = pure
 
     {-# INLINE (>>=) #-}
-    Decoder xIO >>= f = Decoder $ \pd ip0 s0 ->
-        case xIO pd ip0 s0 of
-          (# s1, ip1, x #) -> unDecoder (f x) pd (Ptr ip1) s1
+    Decoder xIO >>= f = Decoder $ \pd ip0 ->
+        case xIO pd ip0 of
+          (# ip1, x #) -> unDecoder (f x) pd (Ptr ip1)
 
     {-# INLINE fail #-}
     fail = Decoder . const . failStep
@@ -296,8 +302,8 @@ runDecoder p (S.PS fpbuf off len) = S.inlinePerformIO $ do
             !pd  = decodersLE fpbuf ipe
 
         (`catch` (handler ip0)) $ do
-            x <- IO $ \s0 -> case unDecoder p pd ip0 s0 of
-                               (# s1, _, x #) -> (# s1, x #)
+            x <- IO $ \s0 -> case unDecoder p pd ip0 of
+                               (# _, x #) -> (# s0, x #)
             return (Right x)
   where
     handler :: Ptr Word8 -> DecodingException -> IO (Either String a)
@@ -332,8 +338,8 @@ prim = error "PDecoder: prim - implement"
 --------------------
 
 word8 :: Decoder Word8
-word8 = Decoder $ \pd ip0 s0 -> case pdWord8 pd ip0 s0 of
-                                  (# s1, ip1, w #) -> (# s1, ip1, W8# w #)
+word8 = Decoder $ \pd !(Ptr ip0) -> case pdWord8 pd ip0 of
+                                      (# ip1, w #) -> (# ip1, W8# w #)
 
 word8s = decodeList word8
 
@@ -401,8 +407,8 @@ byteString = \len -> prim (`pdByteString` len)
 -}
 
 char :: Decoder Char
-char = Decoder $ \pd ip0 s0 -> case pdChar pd ip0 s0 of
-                                (# s1, ip1, x #) -> (# s1, ip1, C# x #)
+char = Decoder $ \pd ip0 -> case pdChar pd (getPtr ip0) of
+                              (# ip1, x #) -> (# ip1, C# x #)
 
 {-# INLINE getAddr #-}
 getAddr :: Ptr a -> Addr#

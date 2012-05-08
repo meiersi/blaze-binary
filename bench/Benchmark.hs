@@ -98,9 +98,8 @@ main = Criterion.Main.defaultMain $
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
        , bench "binary: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
-       ]
-       {-
-       [ bench "param-blaze-binary: string" $ nf 
+
+       , bench "param-blaze-binary: string" $ nf 
            (benchParamDecoder ParamBlaze.string) 
            (Blaze.toByteString $ charData nRepl)
        , bench "blaze-binary: string" $ nf 
@@ -109,17 +108,17 @@ main = Criterion.Main.defaultMain $
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
        , bench "binary: string" $ nf (Binary.decode :: L.ByteString -> String) (Binary.encode $ charData nRepl)
-    -}
+       ]
         
+    , bgroup "encode"
+      [ benchmarks "String "   id          (charData nRepl)
+      , benchmarks "[String] "   id        (stringData nRepl)
+      , benchmarks "testValue "  id        (testValue nRepl)
+      , benchmarks "Tree Int "  id         (treeIntData nRepl)
+      , benchmarks "Seq Int "   id         (seqIntData nRepl)
+      , benchmarks "[Int] "     id         (intData nRepl)
+      ]
     ]
-    -- , bgroup "encode"
-    --  [ benchmarks "testValue "  id         (testValue nRepl)
-    --  , benchmarks "Tree Int "  id         (treeIntData nRepl)
-    --  , benchmarks "Seq Int "   id         (seqIntData nRepl)
-    --  , benchmarks "[Int] "     id         (intData nRepl)
-    --  , benchmarks "[String] "   id         (stringData nRepl)
-    --  ]
-    -- ]
   where
     benchDecoder :: Blaze.Decoder a -> S.ByteString -> a
     benchDecoder d bs = case Blaze.runDecoder d bs of
@@ -139,19 +138,19 @@ main = Criterion.Main.defaultMain $
     benchmarks :: forall a b. (Binary a, Blaze.Binary a, Serialize a, NFData a) 
                => String -> (b -> a) -> b -> Benchmark
     benchmarks name f x = bgroup (name ++ show nRepl)
-      [ bgroup "decode"
-        [ bench "blaze-binary" $ nf (benchDecoder Blaze.decode :: S.ByteString -> a) (Blaze.toByteString $ f x)
-        -- , bench "blaze-binary tagged" $ whnf (L.length . renderTagged . Blaze.encode . f) x andrea
-        , bench "cereal" $ nf (decodeLazy :: L.ByteString -> Either String a) (encodeLazy $ f x)
-        , bench "binary" $ nf (Binary.decode :: L.ByteString -> a) (Binary.encode $ f  x)
-        ]
-     -- , bgroup "encode"
-     --   [ bench "blaze-binary" $ nf (L.length . Blaze.toLazyByteString . f) x
+     -- [ bgroup "decode"
+     --   [ bench "blaze-binary" $ nf (benchDecoder Blaze.decode :: S.ByteString -> a) (Blaze.toByteString $ f x)
      --   -- , bench "blaze-binary tagged" $ whnf (L.length . renderTagged . Blaze.encode . f) x andrea
-     --   , bench "cereal" $ nf (L.length . encodeLazy . f)  x
-     --   , bench "binary" $ nf (L.length . Binary.encode . f) x
+     --   , bench "cereal" $ nf (decodeLazy :: L.ByteString -> Either String a) (encodeLazy $ f x)
+     --   , bench "binary" $ nf (Binary.decode :: L.ByteString -> a) (Binary.encode $ f  x)
      --   ]
-      ]
+     --, bgroup "encode"
+       [ bench "blaze-binary" $ nf (L.length . Blaze.toLazyByteString . f) x
+       -- , bench "blaze-binary tagged" $ whnf (L.length . renderTagged . Blaze.encode . f) x andrea
+       , bench "cereal" $ nf (L.length . encodeLazy . f)  x
+       , bench "binary" $ nf (L.length . Binary.encode . f) x
+       ]
+      --]
 
 -- | Testing the new binary encoding format.
 testNewBinary :: Blaze.Binary a => a -> IO ()
