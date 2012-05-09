@@ -9,10 +9,10 @@
 -- Stability   :
 -- Portability : portable
 --
--- Stream decoding of binary values.
+-- Iteratee-style decoding of binary values.
 --
 -----------------------------------------------------------------------------
-module Data.Blaze.Binary.StreamDecoding where
+module Data.Blaze.Binary.IterDecoding where
 
 import Prelude hiding (catch)
 

@@ -17,7 +17,7 @@ import           Control.DeepSeq
 import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
 import qualified Data.Blaze.Binary.Decoding       as Blaze (Decoder, runDecoder)
 import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s, string)
-import qualified Data.Blaze.Binary.StreamDecoding  as StreamBlaze (DStream, decodeWith, word8s )
+import qualified Data.Blaze.Binary.IterDecoding  as IterBlaze (DStream, decodeWith, word8s )
 import qualified Data.ByteString             as S
 import qualified Data.ByteString.Internal    as S
 import qualified Data.ByteString.Lazy        as L
@@ -90,7 +90,7 @@ main = Criterion.Main.defaultMain $
            (benchDecoder (Blaze.decode :: Blaze.Decoder [Word8]) . S.copy)
            (Blaze.toByteString $ word8Data nRepl)
        , bench "stream-blaze-binary: word8s" $ nf 
-           (benchStreamDecoder StreamBlaze.word8s) 
+           (benchIterDecoder IterBlaze.word8s) 
            (Blaze.toByteString $ word8Data nRepl)
        , bench "param-blaze-binary: word8s" $ nf 
            (benchParamDecoder ParamBlaze.word8s . S.copy) 
@@ -130,8 +130,8 @@ main = Criterion.Main.defaultMain $
       Left msg -> error msg
       Right x  -> x
 
-    benchStreamDecoder :: StreamBlaze.DStream a -> S.ByteString -> a
-    benchStreamDecoder d bs = case StreamBlaze.decodeWith d bs of
+    benchIterDecoder :: IterBlaze.DStream a -> S.ByteString -> a
+    benchIterDecoder d bs = case IterBlaze.decodeWith d bs of
       Left msg -> error msg
       Right x  -> x
 
