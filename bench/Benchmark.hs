@@ -17,7 +17,8 @@ import           Control.DeepSeq
 import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
 import qualified Data.Blaze.Binary.Decoding       as Blaze (Decoder, runDecoder)
 import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s, string)
-import qualified Data.Blaze.Binary.IterDecoding  as IterBlaze (DStream, decodeWith, word8s )
+import qualified Data.Blaze.Binary.IterDecoding   as IterBlaze (DStream, decodeWith, word8s )
+import qualified Data.Blaze.Binary.StreamDecoding as StreamBlaze (benchWord8s)
 import qualified Data.ByteString             as S
 import qualified Data.ByteString.Internal    as S
 import qualified Data.ByteString.Lazy        as L
@@ -86,10 +87,13 @@ charData n = take n ['\0'..]
 main :: IO ()
 main = Criterion.Main.defaultMain $ 
     [ bgroup ("decode (" ++ show nRepl ++ ")")
-       [ bench "blaze-binary: word8s" $ nf 
+       [ bench "stream-blaze-binary: word8s" $ nf 
+           (StreamBlaze.benchWord8s . S.copy)
+           (Blaze.toByteString $ word8Data nRepl)
+       , bench "blaze-binary: word8s" $ nf 
            (benchDecoder (Blaze.decode :: Blaze.Decoder [Word8]) . S.copy)
            (Blaze.toByteString $ word8Data nRepl)
-       , bench "stream-blaze-binary: word8s" $ nf 
+       , bench "iter-blaze-binary: word8s" $ nf 
            (benchIterDecoder IterBlaze.word8s) 
            (Blaze.toByteString $ word8Data nRepl)
        , bench "param-blaze-binary: word8s" $ nf 
