@@ -17,7 +17,7 @@ import           Control.DeepSeq
 import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
 import qualified Data.Blaze.Binary.Decoding       as Blaze (Decoder, runDecoder)
 import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s, string)
-import qualified Data.Blaze.Binary.IterDecoding   as IterBlaze (DStream, decodeWith, word8s )
+import qualified Data.Blaze.Binary.IterDecoding   as IterBlaze (DStream, decodeWith, word8s, string )
 import qualified Data.Blaze.Binary.StreamDecoding as StreamBlaze (benchWord8s)
 import qualified Data.ByteString             as S
 import qualified Data.ByteString.Internal    as S
@@ -42,7 +42,7 @@ import qualified Data.Foldable as F (toList)
 
 -- | The number of repetitions to consider.
 nRepl :: Int
-nRepl = 10000
+nRepl = 100
 
 -- We use NOINLINE to ensure that GHC has no chance of optimizing too much.
 
@@ -93,6 +93,12 @@ main = Criterion.Main.defaultMain $
        , bench "iter-blaze-binary: word8s" $ nf 
            (benchIterDecoder IterBlaze.word8s) 
            (Blaze.toByteString $ word8Data nRepl)
+       , bench "param-blaze-binary: string" $ nf 
+           (benchParamDecoder ParamBlaze.string) 
+           (Blaze.toByteString $ charData nRepl)
+       , bench "iter-blaze-binary: string" $ nf 
+           (benchIterDecoder IterBlaze.string) 
+           (Blaze.toByteString $ charData nRepl)
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
        , bench "binary: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
@@ -103,9 +109,6 @@ main = Criterion.Main.defaultMain $
            (benchDecoder (Blaze.decode :: Blaze.Decoder [Word8]) . S.copy)
            (Blaze.toByteString $ word8Data nRepl)
 
-       , bench "param-blaze-binary: string" $ nf 
-           (benchParamDecoder ParamBlaze.string) 
-           (Blaze.toByteString $ charData nRepl)
        , bench "blaze-binary: string" $ nf 
            (benchDecoder (Blaze.decode :: Blaze.Decoder String))
            (Blaze.toByteString $ charData nRepl)
