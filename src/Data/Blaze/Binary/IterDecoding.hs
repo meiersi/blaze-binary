@@ -22,12 +22,25 @@ import qualified Data.ByteString.Internal as S
 
 import Foreign 
 import GHC.Word
+import GHC.Int
 import GHC.Prim
+import GHC.Types
 
 data DStreamRep a = 
-       DReturn a
+       DWord8  (Word# -> DStreamRep a)
+     | DInt    (Int#  -> DStreamRep a)
+     | DWord   (Word# -> DStreamRep a)
+     | DFloat  (Float# -> DStreamRep a)
+     | DDouble (Double# -> DStreamRep a)
+     | DWord64 (Word# -> DStreamRep a)
+     | DInt64  (Int#  -> DStreamRep a)
+     | DWord32 (Word# -> DStreamRep a)
+     | DInt32  (Int#  -> DStreamRep a)
+     | DWord16 (Word# -> DStreamRep a)
+     | DInt16  (Int#  -> DStreamRep a)
+     | DInt8   (Int#  -> DStreamRep a)
      | DFail String
-     | DWord8 (Word# -> DStreamRep a)
+     | DReturn a
 
 newtype DStream a = DStream { 
           unDStream :: forall r. (a -> DStreamRep r) -> DStreamRep r
@@ -81,10 +94,42 @@ decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
           go !ip ds = case ds of
               DReturn x -> return $ Right x
               DFail msg -> err msg ip
-              DWord8 k 
-                | ip < ipe  -> do (W8# w) <- peek ip
-                                  go (ip `plusPtr` 1) (k w)
-                | otherwise -> unexpectedEOI ip
+              DWord8  k -> readN 1 $ \ip' -> do (W8# x) <- peek $ castPtr ip
+                                                go ip' (k x)
+              DWord16 k -> readN 2 $ \ip' -> do (W16# x) <- peek $ castPtr ip
+                                                go ip' (k x)
+              DWord32 k -> readN 4 $ \ip' -> do (W32# x) <- peek $ castPtr ip
+                                                go ip' (k x)
+              DWord64 k -> readN 8 $ \ip' -> do (W64# x) <- peek $ castPtr ip
+                                                go ip' (k x)
+              DWord k -> readN (sizeOf (undefined :: Word)) $ \ip' -> do 
+                  (W# x) <- peek $ castPtr ip
+                  go ip' (k x)
+              DInt8  k -> readN 1 $ \ip' -> do (I8# x) <- peek $ castPtr ip
+                                               go ip' (k x)
+              DInt16 k -> readN 2 $ \ip' -> do (I16# x) <- peek $ castPtr ip
+                                               go ip' (k x)
+              DInt32 k -> readN 4 $ \ip' -> do (I32# x) <- peek $ castPtr ip
+                                               go ip' (k x)
+              DInt64 k -> readN 8 $ \ip' -> do (I64# x) <- peek $ castPtr ip
+                                               go ip' (k x)
+              DInt k -> readN (sizeOf (undefined :: Int)) $ \ip' -> do 
+                  (I# x) <- peek $ castPtr ip
+                  go ip' (k x)
+              DFloat k -> readN (sizeOf (undefined :: Float)) $ \ip' -> do 
+                  (F# x) <- peek $ castPtr ip
+                  go ip' (k x)
+              DDouble k -> readN (sizeOf (undefined :: Double)) $ \ip' -> do 
+                  (D# x) <- peek $ castPtr ip
+                  go ip' (k x)
+            where
+              {-# INLINE readN #-}
+              readN :: Int
+                    -> (Ptr Word8 -> IO (Either String a)) 
+                    -> IO (Either String a)
+              readN n io =
+                  let ip' = ip `plusPtr` n in
+                  if ip' <= ipe then io ip' else unexpectedEOI ip
 
       go ip0 (unDStream ds0 DReturn)
 
