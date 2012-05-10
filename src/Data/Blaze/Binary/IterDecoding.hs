@@ -78,7 +78,7 @@ decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
           unexpectedEOI = err "unexpected end-of-input"
 
           go :: Ptr Word8 -> DStreamRep a -> IO (Either String a)
-          go !ip !ds = case ds of
+          go !ip ds = case ds of
               DReturn x -> return $ Right x
               DFail msg -> err msg ip
               DWord8 k 

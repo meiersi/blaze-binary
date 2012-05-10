@@ -20,6 +20,7 @@ import qualified Data.Blaze.Binary.Decoding as D
 
 import Control.Applicative
 import Control.Exception
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
 
 import Data.Typeable
 import qualified Data.ByteString.Internal as S
@@ -28,6 +29,7 @@ import GHC.Ptr
 import GHC.Word
 import GHC.Exts
 import GHC.IO (IO(IO))
+import GHC.Conc.Sync (forkIOWithUnmask)
 import Foreign 
 
 
@@ -301,15 +303,44 @@ runDecoder p (S.PS fpbuf off len) = S.inlinePerformIO $ do
             !ipe = ip0 `plusPtr` len
             !pd  = decodersLE fpbuf ipe
 
-        (`catch` (handler ip0)) $ do
-            x <- IO $ \s0 -> case unDecoder p pd ip0 of
-                               (# _, x #) -> (# s0, x #)
-            return (Right x)
+            decodeFast = (handle (decodingException ip0)) $ do
+                x <- IO $ \s0 -> case unDecoder p pd ip0 of
+                                   (# _, x #) -> (# s0, x #)
+                return (Right x)
+
+            -- For deeply nested messages our decoder might overflow the
+            -- stack. We report this error politely as a decoding failure
+            -- instead of killing all the pure code above us. As a
+            -- stackoverflow is an asynchronous exception, we have to ensure
+            -- that we are not masked. Note that we are essentially allocating
+            -- a fresh stack for the decoding using 'forkIOWithUnmask' :-)
+            decodeLarge =  do
+                mv <- newEmptyMVar
+                _  <- forkIOWithUnmask $ \unmask ->
+                          handle (allExceptions mv) $ 
+                          handle (stackOverflow mv) $
+                              unmask $ putMVar mv =<< (Right <$> decodeFast)
+                res <- takeMVar mv
+                case res of
+                    Left e  -> throw e
+                    Right x -> return x
+
+        if len < 1024 then decodeFast else decodeLarge
   where
-    handler :: Ptr Word8 -> DecodingException -> IO (Either String a)
-    handler ip0 (DecodingException msg ip) = return $ Left $ 
+    decodingException :: Ptr Word8 -> DecodingException -> IO (Either String a)
+    decodingException ip0 (DecodingException msg ip) = return $ Left $ 
         msg ++ 
         " (at byte " ++ show (ip `minusPtr` ip0) ++ " of " ++ show len ++ ")" 
+
+    stackOverflow :: MVar (Either e (Either String a)) -> AsyncException -> IO ()
+    stackOverflow mv StackOverflow = putMVar mv $ Right $ Left $ 
+        "stack overflow: the message of size " ++ show len ++
+        " may be nested too deeply."
+    stackOverflow _ e = throw e
+
+    allExceptions :: MVar (Either SomeException a) -> SomeException -> IO ()
+    allExceptions mv e = putMVar mv (Left e)
+
 
 -- Decoder construction
 -----------------------

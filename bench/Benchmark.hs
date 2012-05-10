@@ -87,21 +87,21 @@ charData n = take n ['\0'..]
 main :: IO ()
 main = Criterion.Main.defaultMain $ 
     [ bgroup ("decode (" ++ show nRepl ++ ")")
-       [ bench "stream-blaze-binary: word8s" $ nf 
+       [ bench "param-blaze-binary: word8s" $ nf 
+           (benchParamDecoder ParamBlaze.word8s . S.copy) 
+           (Blaze.toByteString $ word8Data nRepl)
+       , bench "iter-blaze-binary: word8s" $ nf 
+           (benchIterDecoder IterBlaze.word8s) 
+           (Blaze.toByteString $ word8Data nRepl)
+    --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
+    --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
+       , bench "binary: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
+       , bench "stream-blaze-binary: word8s" $ nf 
            (StreamBlaze.benchWord8s . S.copy)
            (Blaze.toByteString $ word8Data nRepl)
        , bench "blaze-binary: word8s" $ nf 
            (benchDecoder (Blaze.decode :: Blaze.Decoder [Word8]) . S.copy)
            (Blaze.toByteString $ word8Data nRepl)
-       , bench "iter-blaze-binary: word8s" $ nf 
-           (benchIterDecoder IterBlaze.word8s) 
-           (Blaze.toByteString $ word8Data nRepl)
-       , bench "param-blaze-binary: word8s" $ nf 
-           (benchParamDecoder ParamBlaze.word8s . S.copy) 
-           (Blaze.toByteString $ word8Data nRepl)
-    --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
-    --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
-       , bench "binary: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
 
        , bench "param-blaze-binary: string" $ nf 
            (benchParamDecoder ParamBlaze.string) 
