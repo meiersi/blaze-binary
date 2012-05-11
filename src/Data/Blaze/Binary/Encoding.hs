@@ -111,6 +111,20 @@ instance Monoid VStream where
   {-# INLINE mconcat #-}
   mconcat                = foldr mappend mempty
 
+-- | Binary encode a 'VStream' to a lazy bytestring 'B.Builder' using a
+-- compact Base-128 encoding for integers and words.
+renderCompact :: VStream -> B.Builder
+renderCompact = renderWith
+    (E.fromF E.word8) E.word16Base128LE      E.word32Base128LE      E.word64Base128LE
+    E.wordBase128LE
+    (E.fromF E.int8)  E.int16ZigZagBase128LE E.int32ZigZagBase128LE E.int64ZigZagBase128LE
+    E.intZigZagBase128LE
+    E.charUtf8 
+    (E.fromF E.floatLE) (E.fromF E.doubleLE)
+    (error "render: integer: implement")
+    (\x -> E.encodeWithB E.intZigZagBase128LE (S.length x) <> B.byteString x)
+    id
+
 -- | Binary encode a 'VStream' to a lazy bytestring 'B.Builder'.
 render :: VStream -> B.Builder
 render = renderWith
@@ -118,7 +132,7 @@ render = renderWith
     (fe E.int8)  (fe E.int16LE)  (fe E.int32LE)  (fe E.int64LE)  (fe (fromIntegral E.>$< E.int64LE))
     E.charUtf8 (fe E.floatLE) (fe E.doubleLE)
     (error "render: integer: implement")
-    B.byteString
+    (\x -> B.int64LE (fromIntegral $ S.length x) <> B.byteString x)
     id
   where
     {-# INLINE fe #-}
