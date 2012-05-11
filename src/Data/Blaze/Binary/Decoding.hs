@@ -164,6 +164,10 @@ float = storable
 double :: Decoder Double
 double = storable
 
+{-# INLINE byteString #-}
+byteString :: Decoder S.ByteString
+byteString = int >>= byteStringSlice
+
 {-# INLINE byteStringSlice #-}
 byteStringSlice :: Int -> Decoder S.ByteString
 byteStringSlice len = Decoder $ \fpbuf ip0 ipe s0 ->

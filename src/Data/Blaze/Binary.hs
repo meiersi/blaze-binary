@@ -307,12 +307,12 @@ instance (Binary a, Binary b) => Binary (Either a b) where
 
 instance Binary S.ByteString where
     {-# INLINE encode #-}
-    encode = \bs -> int (S.length bs) <> byteString bs
+    encode = byteString
     {-# INLINE decode #-}
-    decode = D.int >>= D.byteStringSlice
+    decode = D.byteString
 
 instance Binary L.ByteString where
-    encode = (<> int 0) . L.foldrChunks (\bs s -> encode bs <> s) mempty
+    encode = L.foldrChunks (\bs s -> encode bs <> s) (encode S.empty)
     decode = do
       bs <- decode
       if S.null bs
