@@ -132,32 +132,32 @@ provided as combintors for them.
     newtype Decoder a = ...
 
     class Binary a where
-      toBinary   :: Encoder a
-      fromBinary :: Decoder a
+      encode :: Encoder a
+      decode :: Decoder a
 
 Only one format is supported in the beginning. The untagged, throughput
 format. This format gives a good baseline for the possible speed of the
 implementation. We run an `Encoder` by converting it to a bytestring
 `Builder`.
 
-    encode :: Encoder a -> a -> Builder
+    runEncoder :: Encoder a -> a -> Builder
 
 We run a `Decoder` by converting it to an
 (`Data.Attoparsec.ByteString.Result`)[http://hackage.haskell.org/packages/archive/attoparsec/0.10.1.1/doc/html/Data-Attoparsec-ByteString.html#t:Result].
 
-    decode :: Decoder a -> Result a
+    runDecoder :: Decoder a -> Result a
 
 Note that the decoder selects the appropriate format based on the 4-byte
 prefix.
 
 We provide convenience functions for the conversion to and from bytestrings.
 
-    toBinaryBuilder          :: Binary a => a -> Builder
-    toBinaryByteString       :: Binary a => a -> S.ByteString
-    toBinaryLazyByteString   :: Binary a => a -> L.ByteString 
+    encodeToBuilder          :: Binary a => a -> Builder
+    encodeToByteString       :: Binary a => a -> S.ByteString
+    encodeToLazyByteString   :: Binary a => a -> L.ByteString 
  
-    fromBinaryByteString     :: Binary a => S.ByteString -> Either String a
-    fromBinaryLazyByteString :: Binary a => L.ByteString -> Either String a
+    decodeFromByteString     :: Binary a => S.ByteString -> Either String a
+    decodeFromLazyByteString :: Binary a => L.ByteString -> Either String a
 
 
 
