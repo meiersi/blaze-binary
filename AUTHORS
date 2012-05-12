@@ -1,0 +1,7 @@
+Author
+  Simon Meier <iridcode@gmail.com>
+
+Contributors
+  Bas van Dijk
+
+Building on the code in the `binary`, `cereal`, and `text` libraries.
