@@ -75,9 +75,11 @@ class Binary t where
 #ifdef GENERICS
     default encode :: (Generic t, GBinary (Rep t)) => Encoding t
     encode = gEncode . from
+    {-# INLINE encode #-}
 
     default decode :: (Generic t, GBinary (Rep t)) => D.Decoder t
     decode = to <$> gDecode
+    {-# INLINE decode #-}
 #endif
 
 -- | Encode a value to a strict 'S.ByteString'.

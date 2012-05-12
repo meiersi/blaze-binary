@@ -33,14 +33,31 @@ library
         hs-source-dirs:         src
 
         exposed-modules:        Data.Blaze.Binary
-        extensions:             FlexibleContexts
-                              , FlexibleInstances
-                              , MagicHash
-                              , BangPatterns
-                              , OverloadedStrings
 
         ghc-options:            -Wall
         ghc-prof-options:       -prof -auto-all
 
         if impl(ghc >= 7.2.1)
             cpp-options: -DGENERICS
+
+benchmark bench
+  type:              exitcode-stdio-1.0
+  main-is:           Benchmark.hs
+  hs-source-dirs:    bench, src
+  build-depends:     base               >= 4      && < 5
+                   , ghc-prim           >= 0.2    && < 0.3
+                   , containers         >= 0.4    && < 0.5
+                   , array              >= 0.4    && < 0.5
+                   , bytestring         >= 0.9    && < 0.10
+                   , criterion          >= 0.6    && < 0.7
+                   , cereal             >= 0.3    && < 0.4
+           -- Use the 'cps' branch from https://github.com/kolmodin/binary.git
+           -- for binary-0.6.0.0
+                   , binary             >= 0.6    && < 0.7
+                   , bytestring-builder >= 0.1    && < 0.2
+                   , deepseq            >= 1.3    && < 1.4
+                   , primitive          >= 0.4    && < 0.5
+                   , attoparsec         >= 0.10   && < 0.11
+
+  if impl(ghc >= 7.2.1)
+    cpp-options: -DGENERICS
