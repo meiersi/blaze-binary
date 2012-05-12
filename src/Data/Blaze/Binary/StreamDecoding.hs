@@ -1,4 +1,4 @@
-{-# LANGUAGE UnboxedTuples, BangPatterns #-}
+{-# LANGUAGE CPP, UnboxedTuples, BangPatterns #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Data.Blaze.Binary.Encoding
@@ -21,7 +21,15 @@ import Control.Applicative
 
 import qualified Data.ByteString.Internal                            as S
 
-import Foreign
+import Foreign.Ptr        (plusPtr)
+import Foreign.ForeignPtr (touchForeignPtr)
+import Foreign.Storable   (peek)
+
+#if  __GLASGOW_HASKELL__ >= 702
+import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
+#else
+import Foreign.ForeignPtr        (unsafeForeignPtrToPtr)
+#endif
 
 ------------------------------------------------------------------------
 
@@ -56,12 +64,12 @@ toVStream (S.PS fpbuf off len) =
     ip0  = pbuf `plusPtr` off
     ipe  = ip0 `plusPtr` len
 
-    go !ip 
+    go !ip
       | ip < ipe = S.inlinePerformIO $ do
           w <- peek ip
           touchForeignPtr fpbuf
           return $ VWord8 w (go (ip `plusPtr` 1))
-      | otherwise = 
+      | otherwise =
           VEmpty
 
 runDecoder :: Decoder a -> S.ByteString -> Either String a
@@ -80,7 +88,7 @@ instance Applicative Decoder where
   pure = \x -> Decoder $ \vs -> (# x, vs #)
 
   {-# INLINE (<*>) #-}
-  (<*>) = \fd xd -> Decoder $ \vs0 -> 
+  (<*>) = \fd xd -> Decoder $ \vs0 ->
       case unDecoder fd vs0 of
         (# f, vs1 #) -> case unDecoder xd vs1 of
           (# x, vs2 #) -> (# f x, vs2 #)
@@ -90,7 +98,7 @@ instance Monad Decoder where
   return = pure
 
   {-# INLINE (>>=) #-}
-  (>>=) = \md f -> Decoder $ \vs0 -> 
+  (>>=) = \md f -> Decoder $ \vs0 ->
       case unDecoder md vs0 of
         (# _, vs1@(VFail _) #) -> (# error "impossible", vs1 #)
         (# m, vs1           #) -> unDecoder (f m) vs1

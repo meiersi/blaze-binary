@@ -19,6 +19,7 @@ module Data.Blaze.Binary.Encoding (
     -- * Streams of values to be encoded
     , VStream
     , render
+    , renderCompact
     , renderTagged
     , renderTextualUtf8
 
@@ -119,7 +120,7 @@ renderCompact = renderWith
     E.wordBase128LE
     (E.fromF E.int8)  E.int16ZigZagBase128LE E.int32ZigZagBase128LE E.int64ZigZagBase128LE
     E.intZigZagBase128LE
-    E.charUtf8 
+    E.charUtf8
     (E.fromF E.floatLE) (E.fromF E.doubleLE)
     (error "render: integer: implement")
     (\x -> E.encodeWithB E.intZigZagBase128LE (S.length x) <> B.byteString x)

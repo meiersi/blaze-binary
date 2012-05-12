@@ -33,11 +33,6 @@ library
         hs-source-dirs:         src
 
         exposed-modules:        Data.Blaze.Binary
-        extensions:             FlexibleContexts
-                              , FlexibleInstances
-                              , MagicHash
-                              , BangPatterns
-                              , OverloadedStrings
 
         ghc-options:            -Wall
         ghc-prof-options:       -prof -auto-all

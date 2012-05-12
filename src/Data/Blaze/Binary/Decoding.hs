@@ -1,10 +1,10 @@
-{-# LANGUAGE UnboxedTuples, MagicHash, ScopedTypeVariables, BangPatterns, DeriveDataTypeable, OverloadedStrings #-}
+{-# LANGUAGE CPP, UnboxedTuples, MagicHash, ScopedTypeVariables, BangPatterns, DeriveDataTypeable, OverloadedStrings #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Data.Blaze.Binary.Encoding
 -- Copyright   : 2012, Simon Meier <iridcode@gmail.com>
 -- License     : BSD3-style (see LICENSE)
--- 
+--
 -- Maintainer  : Simon Meier <iridcode@gmail.com>
 -- Stability   :
 -- Portability : portable
@@ -19,6 +19,7 @@ import Prelude hiding (catch)
 import Control.Applicative
 import Control.Exception
 
+import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Typeable
 import qualified Data.ByteString.Internal as S
 import GHC.Prim
@@ -26,21 +27,28 @@ import GHC.Ptr
 import GHC.Word
 import GHC.Exts
 import GHC.IO (IO(IO))
-import Foreign 
+import Foreign.ForeignPtr (ForeignPtr, withForeignPtr)
+import Foreign.Storable (Storable, sizeOf, peek)
+
+#if  __GLASGOW_HASKELL__ >= 702
+import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
+#else
+import Foreign.ForeignPtr (unsafeForeignPtrToPtr)
+#endif
 
 data ParseException = ParseException String -- {-# UNPACK #-} !(Ptr Word8)
   deriving( Show, Typeable )
 
 instance Exception ParseException where
 
-newtype Decoder a = Decoder { 
-          -- unDecoder :: ForeignPtr Word8 -> Addr# -> Addr# 
+newtype Decoder a = Decoder {
+          -- unDecoder :: ForeignPtr Word8 -> Addr# -> Addr#
           unDecoder :: ForeignPtr Word8 -> Ptr Word8 -> Ptr Word8
                     -> State# RealWorld -> (# State# RealWorld, Addr#, a #)
         }
 
 instance Functor Decoder where
-    fmap f = \(Decoder io) -> Decoder $ \fpbuf ip0 ipe s0 -> 
+    fmap f = \(Decoder io) -> Decoder $ \fpbuf ip0 ipe s0 ->
         case io fpbuf ip0 ipe s0 of
             (# s1, ip1, x #) -> (# s1, ip1, f x #)
 
@@ -82,7 +90,7 @@ requires n p = Decoder $ \buf@(Buffer ip ipe) ->
     if ipe `minusPtr` ip >= n
       then unDecoder p buf
       else throw $ ParseException $
-             "required " ++ show n ++ 
+             "required " ++ show n ++
              " bytes, but there are only " ++ show (ipe `minusPtr` ip) ++
              " bytes left."
 -}
@@ -90,11 +98,11 @@ requires n p = Decoder $ \buf@(Buffer ip ipe) ->
 {-# INLINE storable #-}
 storable :: forall a. Storable a => Decoder a
 storable = Decoder $ \fpbuf ip0 ipe s0 ->
-    let ip1 = ip0 `plusPtr` size in 
+    let ip1 = ip0 `plusPtr` size in
       if ip1 <= ipe
         then case runIO (peek (castPtr ip0 :: Ptr a)) s0 of
                (# s1, x #) -> (# s1, getAddr ip1, x #)
-        else unDecoder 
+        else unDecoder
                 (fail $ "less than the required " ++ show size ++ " bytes left.")
                 fpbuf ip0 ipe s0
   where
@@ -172,13 +180,13 @@ byteString = int >>= byteStringSlice
 byteStringSlice :: Int -> Decoder S.ByteString
 byteStringSlice len = Decoder $ \fpbuf ip0 ipe s0 ->
     let ip1 = ip0 `plusPtr` len
-    in 
+    in
       if ip1 <= ipe
         then (# s0
              , getAddr ip1
              ,  S.PS fpbuf (ip0 `minusPtr` unsafeForeignPtrToPtr fpbuf) len
              #)
-        else unDecoder 
+        else unDecoder
                 (fail $ "less than the required " ++ show len ++ " bytes left.")
                 fpbuf ip0 ipe s0
 
@@ -200,9 +208,9 @@ getAddr (Ptr a) = a
 
 {-# INLINE decodeList #-}
 decodeList :: Decoder a -> Decoder [a]
-decodeList x = 
+decodeList x =
     go
-  where 
+  where
     go = do tag <- word8
             case tag of
               0 -> return []
@@ -211,9 +219,9 @@ decodeList x =
 
 {-# INLINE decodeMaybe #-}
 decodeMaybe :: Decoder a -> Decoder (Maybe a)
-decodeMaybe just = 
+decodeMaybe just =
     go
-  where 
+  where
     go = do tag <- word8
             case tag of
               0 -> return Nothing
@@ -222,12 +230,12 @@ decodeMaybe just =
 
 {-# INLINE decodeEither #-}
 decodeEither :: Decoder a -> Decoder b -> Decoder (Either a b)
-decodeEither left right = 
+decodeEither left right =
     go
-  where 
+  where
     go = do tag <- word8
             case tag of
-              0 -> Left <$> left 
+              0 -> Left <$> left
               1 -> Right <$> right
               _ -> fail $ "decodeEither: unexpected tag " ++ show tag
 
