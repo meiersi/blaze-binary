@@ -32,8 +32,8 @@ module Data.Blaze.Binary (
 
 import Control.Applicative
 
-import Data.Blaze.Binary.Encoding
-import qualified Data.Blaze.Binary.Decoding as D
+import qualified Data.Blaze.Binary.Encoder as E
+import qualified Data.Blaze.Binary.Decoder as D
 
 import Data.Word
 import Data.Monoid

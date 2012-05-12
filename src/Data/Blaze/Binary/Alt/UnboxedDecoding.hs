@@ -1,7 +1,7 @@
 {-# LANGUAGE CPP, UnboxedTuples, MagicHash, ScopedTypeVariables, BangPatterns, DeriveDataTypeable, OverloadedStrings #-}
 -----------------------------------------------------------------------------
 -- |
--- Module      : Data.Blaze.Binary.Encoding
+-- Module      : Data.Blaze.Binary.Alt.UnboxedDecoding
 -- Copyright   : 2012, Simon Meier <iridcode@gmail.com>
 -- License     : BSD3-style (see LICENSE)
 --
@@ -9,10 +9,14 @@
 -- Stability   :
 -- Portability : portable
 --
--- Binary encoding of values.
+-- Another alternative for decoding binary values. A predecessor to
+-- "Data.Blaze.Binary.Alt.ParamUnboxedDecoding", which contains a list of the
+-- low-level tricks exploited here. The executive summary is: yes, it's a tad
+-- faster, but the price in terms of low-level nitty-gritty details is too
+-- high.
 --
 -----------------------------------------------------------------------------
-module Data.Blaze.Binary.Decoding where
+module Data.Blaze.Binary.Alt.UnboxedDecoding where
 
 import Prelude hiding (catch)
 

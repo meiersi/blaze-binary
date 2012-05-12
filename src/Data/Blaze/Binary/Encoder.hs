@@ -12,7 +12,7 @@
 -- Binary encoding of values.
 --
 -----------------------------------------------------------------------------
-module Data.Blaze.Binary.Encoding (
+module Data.Blaze.Binary.Encoder (
 
       Encoding
 

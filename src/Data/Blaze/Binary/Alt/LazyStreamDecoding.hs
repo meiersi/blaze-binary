@@ -1,7 +1,7 @@
 {-# LANGUAGE CPP, UnboxedTuples, BangPatterns #-}
 -----------------------------------------------------------------------------
 -- |
--- Module      : Data.Blaze.Binary.Encoding
+-- Module      : Data.Blaze.Binary.Alt.LazyStreamDecoding
 -- Copyright   : 2012, Simon Meier <iridcode@gmail.com>
 -- License     : BSD3-style (see LICENSE)
 --
@@ -9,10 +9,15 @@
 -- Stability   :
 -- Portability : portable
 --
--- Stream based decoding of binary values.
+-- Another alternative decoder:
+--
+-- Decoding of binary values based on a lazily generated stream of primitive
+-- values. The speed is OK, but it's implementation is hacky and definitely
+-- not worth the trouble. Moreover, it also does not support incremental
+-- input.
 --
 -----------------------------------------------------------------------------
-module Data.Blaze.Binary.StreamDecoding (
+module Data.Blaze.Binary.Alt.LazyStreamDecoding (
     benchWord8s
   ) where
 

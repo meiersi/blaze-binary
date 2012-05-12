@@ -12,7 +12,7 @@
 -- Iteratee-style decoding of binary values.
 --
 -----------------------------------------------------------------------------
-module Data.Blaze.Binary.IterDecoding where
+module Data.Blaze.Binary.Decoder where
 
 import Prelude hiding (catch)
 

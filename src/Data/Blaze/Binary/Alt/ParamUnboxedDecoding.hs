@@ -11,8 +11,22 @@
 --
 -- Decoding of binary values parametrized over the primitive parsers.
 --
+-- This version exploits a bunch of low-level tricks to improve the speed:
+--   - it uses unboxed tuples to implement an IO monad that additionally
+--     carries the pointer to the next byte to read.
+--   - it stores that static content of the parsing state in the closure of
+--     the primitive decoders. This way it only uses 'stg_ap_n' calls, which
+--     are a lot faster than 'stg_ap_nv' calls, because 'stg_ap_nv' are
+--     compiled to 'stg_ap_n' followed by 'stg_ap_v'.
+--   - it uses exceptions to report failures. 
+--   - it uses 'forkIOWithUnmask' to reserve its own stack for large inputs.
+--
+-- In some benchmarks this decoder is really fast. However, I must say that I
+-- would not like to maintain this low-level hackery. Moreover, it does not
+-- allow incremental input, as the parser cannot be suspended.
+--
 -----------------------------------------------------------------------------
-module Data.Blaze.Binary.ParamDecoding where
+module Data.Blaze.Binary.Alt.ParamUnboxedDecoding where
 
 import Prelude hiding (catch)
 
