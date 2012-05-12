@@ -376,16 +376,24 @@ word8s = decodeList word8
 
 string = decodeList char
 
+-- {-# NOINLINE decodeList #-}
+-- decodeList :: Decoder a -> Decoder [a]
+-- decodeList x = go
+--   where
+--     go = do
+--       tag <- word8
+--       case tag of
+--         0 -> return []
+--         1 -> (:) <$> x <*> go
+--         _ -> fail $ "decodeList: unexpected tag " ++ show tag
 {-# NOINLINE decodeList #-}
 decodeList :: Decoder a -> Decoder [a]
-decodeList x = go
+decodeList decode =
+    int >>= go
   where
-    go = do
-      tag <- word8
-      case tag of
-        0 -> return []
-        1 -> (:) <$> x <*> go
-        _ -> fail $ "decodeList: unexpected tag " ++ show tag
+    go !n
+      | n <= 0    = return []
+      | otherwise = (:) <$> decode <*> go (n - 1)
 
 {-# INLINE word16 #-}
 word16 :: Decoder Word16

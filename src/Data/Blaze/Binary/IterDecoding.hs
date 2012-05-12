@@ -68,6 +68,9 @@ instance Monad DStream where
     {-# INLINE (>>=) #-}
     (>>=) = \sm f -> DStream $ \k -> unDStream sm (\m -> unDStream (f m) k)
 
+    {-# INLINE (>>) #-}
+    (>>) = \sm sn -> DStream $ \k -> unDStream sm (\_ -> unDStream sn k)
+
     fail msg = DStream $ \_ -> DFail msg
 
 word8 :: DStream Word8
@@ -76,23 +79,47 @@ word8 = DStream $ \k -> DWord8 (\x -> k (W8# x))
 char :: DStream Char
 char = DStream $ \k -> DChar (\x -> k (C# x))
 
+{-# NOINLINE word8s #-}
 word8s :: DStream [Word8]
 word8s = decodeList word8
+
+int :: DStream Int
+int = DStream $ \k -> DInt (\x -> k (I# x))
 
 string :: DStream String
 string = decodeList char
 
+listOfWord8s :: DStream [[Word8]]
+listOfWord8s = decodeList word8s
+
 {-# NOINLINE decodeList #-}
 decodeList :: DStream a -> DStream [a]
 decodeList decode =
-    go
+    int >>= go []
   where
-    go = do
-        tag <- word8
-        case tag of
-          0 -> return []
-          1 -> force ((:) <$> decode <*> go)
-          _ -> fail $ "decodeList: unexpected tag " ++ show tag
+    go xs !n
+      | n <= 0    = return []
+      | otherwise = do x <- decode; go (x:xs) (n - 1)
+
+-- {-# NOINLINE decodeList #-}
+-- decodeList :: DStream a -> DStream [a]
+-- decodeList decode =
+--     int >>= go
+--   where
+--     go !n
+--       | n <= 0    = return []
+--       | otherwise = force ((:) <$> decode <*> go (n - 1))
+
+-- decodeList :: DStream a -> DStream [a]
+-- decodeList decode =
+--     go
+--   where
+--     go = do
+--         tag <- word8
+--         case tag of
+--           0 -> return []
+--           1 -> force ((:) <$> decode <*> go)
+--           _ -> fail $ "decodeList: unexpected tag " ++ show tag
 
 -- | Use 'force' to ensure that the finally returned value is in WHNF. This
 -- reduces memory usage, as it flattens all the one-argument PAPS that were

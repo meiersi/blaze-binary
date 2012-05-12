@@ -18,7 +18,7 @@ import           Control.Applicative
 import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
 import qualified Data.Blaze.Binary.Decoding       as Blaze (Decoder, runDecoder)
 import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s, string)
-import qualified Data.Blaze.Binary.IterDecoding   as IterBlaze (DStream, decodeWith, word8s, string )
+import qualified Data.Blaze.Binary.IterDecoding   as IterBlaze (DStream, decodeWith, word8s, string, listOfWord8s )
 import qualified Data.Blaze.Binary.StreamDecoding as StreamBlaze (benchWord8s)
 import qualified Data.ByteString             as S
 import qualified Data.ByteString.Internal    as S
@@ -81,6 +81,9 @@ testValue n = replicate n $ Just
 word8Data :: Int -> [Word8]
 word8Data n = take n $ cycle [(0::Word8)..]
 
+word8sData :: Int -> [[Word8]]
+word8sData n = take n $ cycle [[1..5], [101..105]]
+
 charData :: Int -> String
 charData n = take n ['\0'..]
 
@@ -90,49 +93,55 @@ charData n = take n ['\0'..]
 main :: IO ()
 main = Criterion.Main.defaultMain $ 
     [ bgroup ("decode (" ++ show nRepl ++ ")")
-       [ bench "param-blaze-binary: word8s" $ nf 
-           (benchParamDecoder ParamBlaze.word8s . S.copy) 
-           (Blaze.toByteString $ word8Data nRepl)
-       , bench "iter-blaze-binary: word8s" $ nf 
+       -- [ bench "param-blaze-binary: word8s" $ nf 
+       --     (benchParamDecoder ParamBlaze.word8s . S.copy) 
+       --     (Blaze.toByteString $ word8Data nRepl)
+       [ bench "iter-blaze-binary: word8s" $ nf 
            (benchIterDecoder IterBlaze.word8s) 
            (Blaze.toByteString $ word8Data nRepl)
-       , bench "binary: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
-       , bench "attoparsec-noinline: word8s" $ nf 
-           (benchAttoparsec attoBinaryWord8sNoInline)
-           (Blaze.toByteString $ word8Data nRepl)
-       , bench "param-blaze-binary: string" $ nf 
-           (benchParamDecoder ParamBlaze.string) 
-           (Blaze.toByteString $ charData nRepl)
+       , bench "binary-cps: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
+       , bench "iter-blaze-binary: [word8s]" $ nf 
+           (benchIterDecoder IterBlaze.listOfWord8s) 
+           (Blaze.toByteString $ word8sData nRepl)
+       , bench "binary-cps: [word8s]" $ nf (Binary.decode :: L.ByteString -> [[Word8]]) (Binary.encode $ word8sData nRepl)
+       -- , bench "attoparsec-noinline: word8s" $ nf 
+       --     (benchAttoparsec attoBinaryWord8sNoInline)
+       --     (Blaze.toByteString $ word8Data nRepl)
+       -- , bench "param-blaze-binary: string" $ nf 
+       --     (benchParamDecoder ParamBlaze.string) 
+       --     (Blaze.toByteString $ charData nRepl)
        , bench "iter-blaze-binary: string" $ nf 
            (benchIterDecoder IterBlaze.string) 
            (Blaze.toByteString $ charData nRepl)
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
-       , bench "binary: string" $ nf (Binary.decode :: L.ByteString -> String) (Binary.encode $ charData nRepl)
-       , bench "stream-blaze-binary: word8s" $ nf 
-           (StreamBlaze.benchWord8s . S.copy)
-           (Blaze.toByteString $ word8Data nRepl)
-       , bench "blaze-binary: word8s" $ nf 
-           (benchDecoder (Blaze.decode :: Blaze.Decoder [Word8]) . S.copy)
-           (Blaze.toByteString $ word8Data nRepl)
+       , bench "binary-cps: string" $ nf (Binary.decode :: L.ByteString -> String) (Binary.encode $ charData nRepl)
+       -- , bench "stream-blaze-binary: word8s" $ nf 
+       --     (StreamBlaze.benchWord8s . S.copy)
+       --     (Blaze.toByteString $ word8Data nRepl)
+       -- , bench "blaze-binary: word8s" $ nf 
+       --     (benchDecoder (Blaze.decode :: Blaze.Decoder [Word8]) . S.copy)
+       --     (Blaze.toByteString $ word8Data nRepl)
 
-       , bench "blaze-binary: string" $ nf 
-           (benchDecoder (Blaze.decode :: Blaze.Decoder String))
-           (Blaze.toByteString $ charData nRepl)
+       -- , bench "blaze-binary: string" $ nf 
+       --     (benchDecoder (Blaze.decode :: Blaze.Decoder String))
+       --     (Blaze.toByteString $ charData nRepl)
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
-       , bench "attoparsec-inlined: word8s" $ nf 
-           (benchAttoparsec attoBinaryWord8s)
-           (Blaze.toByteString $ word8Data nRepl)
+       -- , bench "attoparsec-inlined: word8s" $ nf 
+       --     (benchAttoparsec attoBinaryWord8s)
+       --     (Blaze.toByteString $ word8Data nRepl)
        ]
         
     , bgroup "encode"
-      [ benchmarks "String "   id          (charData nRepl)
-      , benchmarks "[String] "   id        (stringData nRepl)
-      , benchmarks "testValue "  id        (testValue nRepl)
-      , benchmarks "Tree Int "  id         (treeIntData nRepl)
-      , benchmarks "Seq Int "   id         (seqIntData nRepl)
-      , benchmarks "[Int] "     id         (intData nRepl)
+      [ benchmarks "[Word8] "   id        (word8Data nRepl)
+      , benchmarks "[[Word8]]"   id       (word8sData nRepl)
+      , benchmarks "String "    id        (charData nRepl)
+      , benchmarks "[String] "  id        (stringData nRepl)
+      , benchmarks "testValue " id        (testValue nRepl)
+      , benchmarks "Tree Int "  id        (treeIntData nRepl)
+      , benchmarks "Seq Int "   id        (seqIntData nRepl)
+      , benchmarks "[Int] "     id        (intData nRepl)
       ]
     ]
   where
@@ -168,7 +177,7 @@ main = Criterion.Main.defaultMain $
      --, bgroup "encode"
        [ bench "blaze-binary" $ nf (L.length . Blaze.toLazyByteString . f) x
        -- , bench "blaze-binary tagged" $ whnf (L.length . renderTagged . Blaze.encode . f) x andrea
-       , bench "cereal" $ nf (L.length . encodeLazy . f)  x
+       -- , bench "cereal" $ nf (L.length . encodeLazy . f)  x
        , bench "binary" $ nf (L.length . Binary.encode . f) x
        ]
       --]

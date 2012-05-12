@@ -279,7 +279,15 @@ instance (Binary a, Binary b, Binary c, Binary d, Binary e,
 -- | Share list encoding, as it is required for faster tree encoding.
 {-# INLINE encodeList #-}
 encodeList :: Encoding a -> Encoding [a]
-encodeList f = (<> word8 0) . foldMap ((word8 1 <>) . f)
+-- encodeList f = (<> word8 0) . foldMap ((word8 1 <>) . f)
+-- encodeList = \f xs -> encode (length xs) <> foldMap f xs
+encodeList f =
+    go (0 :: Int) mempty
+  where
+    go !len acc []     = encode len <> acc
+    go !len acc (x:xs) = go (len + 1) (f x <> acc) xs
+-- \f xs -> encode (length xs) <> foldMap f xs
+  
 -- Encoding the list in reverse order might be interesting to simplify its
 -- parsing. It just depends on which side is easier to get up to speed :-)
 -- encodeList f = (<> word8 0) . foldl (\lhs x -> word8 1 <> f x <> lhs) mempty
