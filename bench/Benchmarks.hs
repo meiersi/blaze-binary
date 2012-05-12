@@ -5,7 +5,7 @@
 #endif
 
 -- |
--- Copyright   : (c) 2011 Simon Meier
+-- Copyright   : (c) 2012 Simon Meier, Bas van Dijk
 -- License     : BSD3-style (see LICENSE)
 --
 -- Maintainer  : Simon Meier <iridcode@gmail.com>
@@ -13,7 +13,7 @@
 -- Portability : tested on GHC only
 --
 -- Benchmark encoding and decoding speed.
-module Main (main, testNewBinary) where
+module Main (main) where
 
 import           Prelude hiding (words)
 import           Data.Monoid ((<>))
@@ -269,11 +269,12 @@ main = Criterion.Main.defaultMain $
        ]
       --]
 
+{-
 -- | Testing the new binary encoding format.
 testNewBinary :: Blaze.Binary a => a -> IO ()
 testNewBinary x =
   LC8.putStrLn $ renderTextualUtf8 $ Blaze.encode (x, Blaze.toLazyByteString x)
-
+-}
 
 instance NFData S.ByteString where
     rnf (S.PS _ _ _) = ()
