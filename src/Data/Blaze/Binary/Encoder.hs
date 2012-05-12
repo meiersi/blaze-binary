@@ -276,37 +276,37 @@ runEncoder = \e x -> render (e x)
 float :: Encoder Float
 float = Stream . EFloat
 
--- | Encode a '' value.
+-- | Encode a 'Double' value.
 {-# INLINE double #-}
 double :: Encoder Double
 double = Stream . EDouble
 
--- | Encode a '' value.
+-- | Encode a 'Integer' value.
 {-# INLINE integer #-}
 integer :: Encoder Integer
 integer = Stream . EInteger
 
--- | Encode a '' value.
+-- | Encode a 'Word' value.
 {-# INLINE word #-}
 word :: Encoder Word
 word = Stream . EWord
 
--- | Encode a '' value.
+-- | Encode a 'Word8' value.
 {-# INLINE word8 #-}
 word8 :: Encoder Word8
 word8 = Stream . EWord8
 
--- | Encode a '' value.
+-- | Encode a 'Word16' value.
 {-# INLINE word16 #-}
 word16 :: Encoder Word16
 word16 = Stream . EWord16
 
--- | Encode a '' value.
+-- | Encode a 'Word32' value.
 {-# INLINE word32 #-}
 word32 :: Encoder Word32
 word32 = Stream . EWord32
 
--- | Encode a '' value.
+-- | Encode a 'Word64' value.
 {-# INLINE word64 #-}
 word64 :: Encoder Word64
 word64 = Stream . EWord64
