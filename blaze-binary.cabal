@@ -22,6 +22,10 @@ source-repository head
   type:     git
   location: git://github.com/meiersi/blaze-binary.git
 
+flag genericBenchmarks
+  Description: Build the generic benchmarks (This takes some time)
+  Default: True
+
 library
         build-depends:          base               == 4.*
                               , bytestring         == 0.9.*
@@ -44,6 +48,7 @@ benchmark bench
   type:              exitcode-stdio-1.0
   main-is:           Benchmarks.hs
   hs-source-dirs:    bench, src
+  ghc-options:       -Wall
   build-depends:     base               >= 4      && < 5
                    , ghc-prim           >= 0.2    && < 0.3
                    , containers         >= 0.4    && < 0.5
@@ -60,5 +65,22 @@ benchmark bench
                    , primitive          >= 0.4    && < 0.5
                    , attoparsec         >= 0.10   && < 0.11
 
-  if impl(ghc >= 7.2.1)
+benchmark bench-generic
+  type:              exitcode-stdio-1.0
+  main-is:           GenericBenchmarks.hs
+  hs-source-dirs:    bench, src
+  ghc-options:       -Wall
+  build-depends:     base               >= 4      && < 5
+                   , ghc-prim           >= 0.2    && < 0.3
+                   , containers         >= 0.4    && < 0.5
+                   , array              >= 0.4    && < 0.5
+                   , bytestring         >= 0.9    && < 0.10
+                   , criterion          >= 0.6    && < 0.7
+                   , bytestring-builder >= 0.1    && < 0.2
+                   , deepseq            >= 1.3    && < 1.4
+                   , primitive          >= 0.4    && < 0.5
+
+  if impl(ghc >= 7.2.1) && flag(genericBenchmarks)
     cpp-options: -DGENERICS
+  else
+    buildable: False
