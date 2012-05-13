@@ -104,42 +104,42 @@ charData n = take n ['\0'..]
 main :: IO ()
 main = Criterion.Main.defaultMain $
     [ bgroup ("decode (" ++ show nRepl ++ ")")
-       -- [ bench "param-blaze-binary: word8s" $ nf 
-       --     (benchParamDecoder ParamBlaze.word8s . S.copy) 
+       -- [ bench "param-blaze-binary: word8s" $ nf
+       --     (benchParamDecoder ParamBlaze.word8s . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
-       [ bench "iter-blaze-binary: word8s" $ nf 
-           (benchIterDecoder IterBlaze.word8s) 
+       [ bench "iter-blaze-binary: word8s" $ nf
+           (benchIterDecoder IterBlaze.word8s)
            (Blaze.toByteString $ word8Data nRepl)
        , bench "binary-cps: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
-       , bench "iter-blaze-binary: [word8s]" $ nf 
-           (benchIterDecoder IterBlaze.listOfWord8s) 
+       , bench "iter-blaze-binary: [word8s]" $ nf
+           (benchIterDecoder IterBlaze.listOfWord8s)
            (Blaze.toByteString $ word8sData nRepl)
        , bench "binary-cps: [word8s]" $ nf (Binary.decode :: L.ByteString -> [[Word8]]) (Binary.encode $ word8sData nRepl)
-       -- , bench "attoparsec-noinline: word8s" $ nf 
+       -- , bench "attoparsec-noinline: word8s" $ nf
        --     (benchAttoparsec attoBinaryWord8sNoInline)
        --     (Blaze.toByteString $ word8Data nRepl)
-       -- , bench "param-blaze-binary: string" $ nf 
-       --     (benchParamDecoder ParamBlaze.string) 
+       -- , bench "param-blaze-binary: string" $ nf
+       --     (benchParamDecoder ParamBlaze.string)
        --     (Blaze.toByteString $ charData nRepl)
-       , bench "iter-blaze-binary: string" $ nf 
-           (benchIterDecoder IterBlaze.string) 
+       , bench "iter-blaze-binary: string" $ nf
+           (benchIterDecoder IterBlaze.string)
            (Blaze.toByteString $ charData nRepl)
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
        , bench "binary-cps: string" $ nf (Binary.decode :: L.ByteString -> String) (Binary.encode $ charData nRepl)
-       -- , bench "stream-blaze-binary: word8s" $ nf 
+       -- , bench "stream-blaze-binary: word8s" $ nf
        --     (StreamBlaze.benchWord8s . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
-       -- , bench "blaze-binary: word8s" $ nf 
+       -- , bench "blaze-binary: word8s" $ nf
        --     (benchDecoder (Blaze.decode :: Blaze.Decoder [Word8]) . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
 
-       -- , bench "blaze-binary: string" $ nf 
+       -- , bench "blaze-binary: string" $ nf
        --     (benchDecoder (Blaze.decode :: Blaze.Decoder String))
        --     (Blaze.toByteString $ charData nRepl)
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
-       -- , bench "attoparsec-inlined: word8s" $ nf 
+       -- , bench "attoparsec-inlined: word8s" $ nf
        --     (benchAttoparsec attoBinaryWord8s)
        --     (Blaze.toByteString $ word8Data nRepl)
 {- =======
@@ -195,8 +195,14 @@ main = Criterion.Main.defaultMain $
     , bgroup "generic"
       [ bgroup "decode"
         [ bgroup "bigProduct"
-          [ bench "generic" $ benchDecode bigProduct
-          , bench "manual"  $ benchDecode bigProduct'
+          [ bgroup "lazy"
+            [ bench "generic" $ benchDecode bigProductL
+            , bench "manual"  $ benchDecode bigProductL'
+            ]
+          , bgroup "strict"
+            [ bench "generic" $ benchDecode bigProduct
+            , bench "manual"  $ benchDecode bigProduct'
+            ]
           ]
         , bgroup "bigSum"
           [ bgroup "0"
@@ -211,8 +217,14 @@ main = Criterion.Main.defaultMain $
         ]
       , bgroup "encode"
         [ bgroup "bigProduct"
-          [ bench "generic" $ nf (L.length . Blaze.toLazyByteString) bigProduct
-          , bench "manual"  $ nf (L.length . Blaze.toLazyByteString) bigProduct'
+          [ bgroup "lazy"
+            [ bench "generic" $ nf (L.length . Blaze.toLazyByteString) bigProductL
+            , bench "manual"  $ nf (L.length . Blaze.toLazyByteString) bigProductL'
+            ]
+          , bgroup "strict"
+            [ bench "generic" $ nf (L.length . Blaze.toLazyByteString) bigProduct
+            , bench "manual"  $ nf (L.length . Blaze.toLazyByteString) bigProduct'
+            ]
           ]
         , bgroup "bigSum"
           [ bgroup "0"
@@ -310,7 +322,7 @@ attoWord8_noinline = A.anyWord8
 
 #ifdef GENERICS
 ------------------------------------------------------------------------------
--- Generics
+-- Big strict products
 ------------------------------------------------------------------------------
 
 data BigProduct = BigProduct   !Int !Int !Int !Int !Int !Int !Int !Int !Int !Int
@@ -357,7 +369,7 @@ instance NFData BigProduct'
 instance Blaze.Binary BigProduct' where
     encode (BigProduct' i00 i01 i02 i03 i04 i05 i06 i07 i08 i09
                         i10 i11 i12 i13 i14 i15 i16 i17 i18 i19
-                        i20 u21 i21 i22 i23 i24 i25 i26 i27 i28
+                        i20 i21 i22 i23 i24 i25 i26 i27 i28 i29
                         i30 i31 i32 i33 i34 i35 i36 i37 i38 i39
                         i40 i41 i42 i43 i44 i45 i46 i47 i48 i49
                         i50 i51 i52 i53 i54 i55 i56 i57 i58 i59
@@ -371,8 +383,8 @@ instance Blaze.Binary BigProduct' where
              <> Blaze.encode i05 <> Blaze.encode i06 <> Blaze.encode i07 <> Blaze.encode i08 <> Blaze.encode i09
              <> Blaze.encode i10 <> Blaze.encode i11 <> Blaze.encode i12 <> Blaze.encode i13 <> Blaze.encode i14
              <> Blaze.encode i15 <> Blaze.encode i16 <> Blaze.encode i17 <> Blaze.encode i18 <> Blaze.encode i19
-             <> Blaze.encode i20 <> Blaze.encode u21 <> Blaze.encode i21 <> Blaze.encode i22 <> Blaze.encode i23
-             <> Blaze.encode i24 <> Blaze.encode i25 <> Blaze.encode i26 <> Blaze.encode i27 <> Blaze.encode i28
+             <> Blaze.encode i20 <> Blaze.encode i21 <> Blaze.encode i22 <> Blaze.encode i23 <> Blaze.encode i24
+             <> Blaze.encode i25 <> Blaze.encode i26 <> Blaze.encode i27 <> Blaze.encode i28 <> Blaze.encode i29
              <> Blaze.encode i30 <> Blaze.encode i31 <> Blaze.encode i32 <> Blaze.encode i33 <> Blaze.encode i34
              <> Blaze.encode i35 <> Blaze.encode i36 <> Blaze.encode i37 <> Blaze.encode i38 <> Blaze.encode i39
              <> Blaze.encode i40 <> Blaze.encode i41 <> Blaze.encode i42 <> Blaze.encode i43 <> Blaze.encode i44
@@ -420,6 +432,162 @@ bigProduct' = BigProduct' 00 01 02 03 04 05 06 07 08 09
                           70 71 72 73 74 75 76 77 78 79
                           80 81 82 83 84 85 86 87 88 89
                           90 91 92 93 94 95 96 97 98 99
+
+--------------------------------------------------------------------------------
+-- Big lazy products
+--------------------------------------------------------------------------------
+
+data BigProductL = BigProductL   Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+  deriving Generic
+
+instance NFData BigProductL where
+    rnf (BigProductL i00 i01 i02 i03 i04 i05 i06 i07 i08 i09
+                     i10 i11 i12 i13 i14 i15 i16 i17 i18 i19
+                     i20 i21 i22 i23 i24 i25 i26 i27 i28 i29
+                     i30 i31 i32 i33 i34 i35 i36 i37 i38 i39
+                     i40 i41 i42 i43 i44 i45 i46 i47 i48 i49
+                     i50 i51 i52 i53 i54 i55 i56 i57 i58 i59
+                     i60 i61 i62 i63 i64 i65 i66 i67 i68 i69
+                     i70 i71 i72 i73 i74 i75 i76 i77 i78 i79
+                     i80 i81 i82 i83 i84 i85 i86 i87 i88 i89
+                     i90 i91 i92 i93 i94 i95 i96 i97 i98 i99
+        ) = rnf i00 `seq` rnf i01 `seq` rnf i02 `seq` rnf i03 `seq` rnf i04 `seq` rnf i05 `seq` rnf i06 `seq` rnf i07 `seq` rnf i08 `seq` rnf i09 `seq`
+            rnf i10 `seq` rnf i11 `seq` rnf i12 `seq` rnf i13 `seq` rnf i14 `seq` rnf i15 `seq` rnf i16 `seq` rnf i17 `seq` rnf i18 `seq` rnf i19 `seq`
+            rnf i20 `seq` rnf i21 `seq` rnf i22 `seq` rnf i23 `seq` rnf i24 `seq` rnf i25 `seq` rnf i26 `seq` rnf i27 `seq` rnf i28 `seq` rnf i29 `seq`
+            rnf i30 `seq` rnf i31 `seq` rnf i32 `seq` rnf i33 `seq` rnf i34 `seq` rnf i35 `seq` rnf i36 `seq` rnf i37 `seq` rnf i38 `seq` rnf i39 `seq`
+            rnf i40 `seq` rnf i41 `seq` rnf i42 `seq` rnf i43 `seq` rnf i44 `seq` rnf i45 `seq` rnf i46 `seq` rnf i47 `seq` rnf i48 `seq` rnf i49 `seq`
+            rnf i50 `seq` rnf i51 `seq` rnf i52 `seq` rnf i53 `seq` rnf i54 `seq` rnf i55 `seq` rnf i56 `seq` rnf i57 `seq` rnf i58 `seq` rnf i59 `seq`
+            rnf i60 `seq` rnf i61 `seq` rnf i62 `seq` rnf i63 `seq` rnf i64 `seq` rnf i65 `seq` rnf i66 `seq` rnf i67 `seq` rnf i68 `seq` rnf i69 `seq`
+            rnf i70 `seq` rnf i71 `seq` rnf i72 `seq` rnf i73 `seq` rnf i74 `seq` rnf i75 `seq` rnf i76 `seq` rnf i77 `seq` rnf i78 `seq` rnf i79 `seq`
+            rnf i80 `seq` rnf i81 `seq` rnf i82 `seq` rnf i83 `seq` rnf i84 `seq` rnf i85 `seq` rnf i86 `seq` rnf i87 `seq` rnf i88 `seq` rnf i89 `seq`
+            rnf i90 `seq` rnf i91 `seq` rnf i92 `seq` rnf i93 `seq` rnf i94 `seq` rnf i95 `seq` rnf i96 `seq` rnf i97 `seq` rnf i98 `seq` rnf i99
+
+instance Blaze.Binary BigProductL
+
+bigProductL :: BigProductL
+bigProductL = BigProductL 00 01 02 03 04 05 06 07 08 09
+                          10 11 12 13 14 15 16 17 18 19
+                          20 21 22 23 24 25 26 27 28 29
+                          30 31 32 33 34 35 36 37 38 39
+                          40 41 42 43 44 45 46 47 48 49
+                          50 51 52 53 54 55 56 57 58 59
+                          60 61 62 63 64 65 66 67 68 69
+                          70 71 72 73 74 75 76 77 78 79
+                          80 81 82 83 84 85 86 87 88 89
+                          90 91 92 93 94 95 96 97 98 99
+
+data BigProductL' = BigProductL' Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+                                 Int Int Int Int Int Int Int Int Int Int
+
+instance NFData BigProductL' where
+    rnf (BigProductL' i00 i01 i02 i03 i04 i05 i06 i07 i08 i09
+                      i10 i11 i12 i13 i14 i15 i16 i17 i18 i19
+                      i20 i21 i22 i23 i24 i25 i26 i27 i28 i29
+                      i30 i31 i32 i33 i34 i35 i36 i37 i38 i39
+                      i40 i41 i42 i43 i44 i45 i46 i47 i48 i49
+                      i50 i51 i52 i53 i54 i55 i56 i57 i58 i59
+                      i60 i61 i62 i63 i64 i65 i66 i67 i68 i69
+                      i70 i71 i72 i73 i74 i75 i76 i77 i78 i79
+                      i80 i81 i82 i83 i84 i85 i86 i87 i88 i89
+                      i90 i91 i92 i93 i94 i95 i96 i97 i98 i99
+        ) = rnf i00 `seq` rnf i01 `seq` rnf i02 `seq` rnf i03 `seq` rnf i04 `seq` rnf i05 `seq` rnf i06 `seq` rnf i07 `seq` rnf i08 `seq` rnf i09 `seq`
+            rnf i10 `seq` rnf i11 `seq` rnf i12 `seq` rnf i13 `seq` rnf i14 `seq` rnf i15 `seq` rnf i16 `seq` rnf i17 `seq` rnf i18 `seq` rnf i19 `seq`
+            rnf i20 `seq` rnf i21 `seq` rnf i22 `seq` rnf i23 `seq` rnf i24 `seq` rnf i25 `seq` rnf i26 `seq` rnf i27 `seq` rnf i28 `seq` rnf i29 `seq`
+            rnf i30 `seq` rnf i31 `seq` rnf i32 `seq` rnf i33 `seq` rnf i34 `seq` rnf i35 `seq` rnf i36 `seq` rnf i37 `seq` rnf i38 `seq` rnf i39 `seq`
+            rnf i40 `seq` rnf i41 `seq` rnf i42 `seq` rnf i43 `seq` rnf i44 `seq` rnf i45 `seq` rnf i46 `seq` rnf i47 `seq` rnf i48 `seq` rnf i49 `seq`
+            rnf i50 `seq` rnf i51 `seq` rnf i52 `seq` rnf i53 `seq` rnf i54 `seq` rnf i55 `seq` rnf i56 `seq` rnf i57 `seq` rnf i58 `seq` rnf i59 `seq`
+            rnf i60 `seq` rnf i61 `seq` rnf i62 `seq` rnf i63 `seq` rnf i64 `seq` rnf i65 `seq` rnf i66 `seq` rnf i67 `seq` rnf i68 `seq` rnf i69 `seq`
+            rnf i70 `seq` rnf i71 `seq` rnf i72 `seq` rnf i73 `seq` rnf i74 `seq` rnf i75 `seq` rnf i76 `seq` rnf i77 `seq` rnf i78 `seq` rnf i79 `seq`
+            rnf i80 `seq` rnf i81 `seq` rnf i82 `seq` rnf i83 `seq` rnf i84 `seq` rnf i85 `seq` rnf i86 `seq` rnf i87 `seq` rnf i88 `seq` rnf i89 `seq`
+            rnf i90 `seq` rnf i91 `seq` rnf i92 `seq` rnf i93 `seq` rnf i94 `seq` rnf i95 `seq` rnf i96 `seq` rnf i97 `seq` rnf i98 `seq` rnf i99
+
+instance Blaze.Binary BigProductL' where
+    encode (BigProductL' i00 i01 i02 i03 i04 i05 i06 i07 i08 i09
+                         i10 i11 i12 i13 i14 i15 i16 i17 i18 i19
+                         i20 i21 i22 i23 i24 i25 i26 i27 i28 i29
+                         i30 i31 i32 i33 i34 i35 i36 i37 i38 i39
+                         i40 i41 i42 i43 i44 i45 i46 i47 i48 i49
+                         i50 i51 i52 i53 i54 i55 i56 i57 i58 i59
+                         i60 i61 i62 i63 i64 i65 i66 i67 i68 i69
+                         i70 i71 i72 i73 i74 i75 i76 i77 i78 i79
+                         i80 i81 i82 i83 i84 i85 i86 i87 i88 i89
+                         i90 i91 i92 i93 i94 i95 i96 i97 i98 i99
+           ) =
+
+                Blaze.encode i00 <> Blaze.encode i01 <> Blaze.encode i02 <> Blaze.encode i03 <> Blaze.encode i04
+             <> Blaze.encode i05 <> Blaze.encode i06 <> Blaze.encode i07 <> Blaze.encode i08 <> Blaze.encode i09
+             <> Blaze.encode i10 <> Blaze.encode i11 <> Blaze.encode i12 <> Blaze.encode i13 <> Blaze.encode i14
+             <> Blaze.encode i15 <> Blaze.encode i16 <> Blaze.encode i17 <> Blaze.encode i18 <> Blaze.encode i19
+             <> Blaze.encode i20 <> Blaze.encode i21 <> Blaze.encode i22 <> Blaze.encode i24 <> Blaze.encode i25
+             <> Blaze.encode i25 <> Blaze.encode i26 <> Blaze.encode i27 <> Blaze.encode i28 <> Blaze.encode i29
+             <> Blaze.encode i30 <> Blaze.encode i31 <> Blaze.encode i32 <> Blaze.encode i33 <> Blaze.encode i34
+             <> Blaze.encode i35 <> Blaze.encode i36 <> Blaze.encode i37 <> Blaze.encode i38 <> Blaze.encode i39
+             <> Blaze.encode i40 <> Blaze.encode i41 <> Blaze.encode i42 <> Blaze.encode i43 <> Blaze.encode i44
+             <> Blaze.encode i45 <> Blaze.encode i46 <> Blaze.encode i47 <> Blaze.encode i48 <> Blaze.encode i49
+             <> Blaze.encode i50 <> Blaze.encode i51 <> Blaze.encode i52 <> Blaze.encode i53 <> Blaze.encode i54
+             <> Blaze.encode i55 <> Blaze.encode i56 <> Blaze.encode i57 <> Blaze.encode i58 <> Blaze.encode i59
+             <> Blaze.encode i60 <> Blaze.encode i61 <> Blaze.encode i62 <> Blaze.encode i63 <> Blaze.encode i64
+             <> Blaze.encode i65 <> Blaze.encode i66 <> Blaze.encode i67 <> Blaze.encode i68 <> Blaze.encode i69
+             <> Blaze.encode i70 <> Blaze.encode i71 <> Blaze.encode i72 <> Blaze.encode i73 <> Blaze.encode i74
+             <> Blaze.encode i75 <> Blaze.encode i76 <> Blaze.encode i77 <> Blaze.encode i78 <> Blaze.encode i79
+             <> Blaze.encode i80 <> Blaze.encode i81 <> Blaze.encode i82 <> Blaze.encode i83 <> Blaze.encode i84
+             <> Blaze.encode i85 <> Blaze.encode i86 <> Blaze.encode i87 <> Blaze.encode i88 <> Blaze.encode i89
+             <> Blaze.encode i90 <> Blaze.encode i91 <> Blaze.encode i92 <> Blaze.encode i93 <> Blaze.encode i94
+             <> Blaze.encode i95 <> Blaze.encode i96 <> Blaze.encode i97 <> Blaze.encode i98 <> Blaze.encode i99
+
+    decode = BigProductL' <$> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+                          <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode <*> Blaze.decode
+
+bigProductL' :: BigProductL'
+bigProductL' = BigProductL' 00 01 02 03 04 05 06 07 08 09
+                            10 11 12 13 14 15 16 17 18 19
+                            20 21 22 23 24 25 26 27 28 29
+                            30 31 32 33 34 35 36 37 38 39
+                            40 41 42 43 44 45 46 47 48 49
+                            50 51 52 53 54 55 56 57 58 59
+                            60 61 62 63 64 65 66 67 68 69
+                            70 71 72 73 74 75 76 77 78 79
+                            80 81 82 83 84 85 86 87 88 89
+                            90 91 92 93 94 95 96 97 98 99
+
+--------------------------------------------------------------------------------
+-- Big sums
+--------------------------------------------------------------------------------
 
 data BigSum = C00 | C01 | C02 | C03 | C04 | C05 | C06 | C07 | C08 | C09
             | C10 | C11 | C12 | C13 | C14 | C15 | C16 | C17 | C18 | C19
