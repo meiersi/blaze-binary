@@ -4,7 +4,7 @@
 -- Module      : Data.Blaze.Binary.Encoding
 -- Copyright   : 2012, Simon Meier <iridcode@gmail.com>
 -- License     : BSD3-style (see LICENSE)
--- 
+--
 -- Maintainer  : Simon Meier <iridcode@gmail.com>
 -- Stability   :
 -- Portability : portable
@@ -12,7 +12,44 @@
 -- Iteratee-style decoding of binary values.
 --
 -----------------------------------------------------------------------------
-module Data.Blaze.Binary.Decoder where
+module Data.Blaze.Binary.Decoder (
+
+    -- * The Decoder Type
+      Decoder
+    , runDecoder
+
+    -- ** Primitive values
+    , word
+    , word8
+    , word16
+    , word32
+    , word64
+
+    , int
+    , int8
+    , int16
+    , int32
+    , int64
+
+    , integer
+    , float
+    , double
+
+    , char
+
+    , byteString
+
+    -- ** Combinators
+    , decodeMaybe
+    , decodeEither
+    , decodeList
+
+    -- ** Testing
+    , word8s
+    , string
+    , listOfWord8s
+
+  ) where
 
 import Prelude hiding (catch)
 
@@ -20,80 +57,259 @@ import Control.Applicative
 
 import qualified Data.ByteString.Internal as S
 
-import Foreign 
+import Foreign
 import GHC.Word
 import GHC.Int
 import GHC.Prim
 import GHC.Types
 
-data DStreamRep a = 
-       DWord8                          (Word#        -> DStreamRep a)
-     | DInt                            (Int#         -> DStreamRep a)
-     | DChar                           (Char#        -> DStreamRep a)
-     | DByteString {-# UNPACK #-} !Int (S.ByteString -> DStreamRep a)
-     | DWord                           (Word#        -> DStreamRep a)
-     | DFloat                          (Float#       -> DStreamRep a)
-     | DDouble                         (Double#      -> DStreamRep a)
-     | DWord64                         (Word#        -> DStreamRep a)
-     | DInt64                          (Int#         -> DStreamRep a)
-     | DWord32                         (Word#        -> DStreamRep a)
-     | DInt32                          (Int#         -> DStreamRep a)
-     | DWord16                         (Word#        -> DStreamRep a)
-     | DInt16                          (Int#         -> DStreamRep a)
-     | DInt8                           (Int#         -> DStreamRep a)
-     | DSlowWord8  (Ptr Word8) String  (Word8 -> DStreamRep a)
+------------------------------------------------------------------------------
+-- Decoders
+------------------------------------------------------------------------------
+
+-- | A 'Decoder' for Haskell values.
+newtype Decoder a = Decoder {
+          unDecoder :: forall r. (a -> DStream r) -> DStream r
+        }
+
+-- | A 'DStream' is a stream of requests for parsing primitive values.
+data DStream a =
+       DWord8                          (Word#        -> DStream a)
+     | DInt                            (Int#         -> DStream a)
+     | DChar                           (Char#        -> DStream a)
+     | DByteString                     (S.ByteString -> DStream a)
+     | DWord                           (Word#        -> DStream a)
+     | DFloat                          (Float#       -> DStream a)
+     | DDouble                         (Double#      -> DStream a)
+     | DWord64                         (Word#        -> DStream a)
+     | DInt64                          (Int#         -> DStream a)
+     | DWord32                         (Word#        -> DStream a)
+     | DInt32                          (Int#         -> DStream a)
+     | DWord16                         (Word#        -> DStream a)
+     | DInt16                          (Int#         -> DStream a)
+     | DInt8                           (Int#         -> DStream a)
+     | DInteger                        (Integer      -> DStream a)
+     | DSlowWord8  (Ptr Word8) String  (Word8 -> DStream a)
        -- ^ For reading a multi-byte primitive at the boundary.
      | DFail       String
      | DReturn a
 
-newtype DStream a = DStream { 
-          unDStream :: forall r. (a -> DStreamRep r) -> DStreamRep r
-        }
 
-instance Functor DStream where
+-- Instances
+------------
+
+instance Functor Decoder where
     {-# INLINE fmap #-}
-    fmap f = \s -> DStream $ \k -> unDStream s (k . f)
- 
-instance Applicative DStream where
+    fmap = \f s -> Decoder $ \k -> unDecoder s (k . f)
+
+instance Applicative Decoder where
     {-# INLINE pure #-}
-    pure = \x -> DStream $ \k -> k x
+    pure = \x -> Decoder $ \k -> k x
 
     {-# INLINE (<*>) #-}
-    (<*>) = \sf sx -> DStream $ \k ->
-                        unDStream sf (\f -> unDStream sx (\x -> k (f x)))
+    (<*>) = \sf sx ->
+        Decoder $ \k -> unDecoder sf (\f -> unDecoder sx (\x -> k (f x)))
 
-instance Monad DStream where
+    {-# INLINE (*>) #-}
+    (*>) = \sx sy -> Decoder $ \k -> unDecoder sx (\_ -> unDecoder sy k)
+
+    {-# INLINE (<*) #-}
+    (<*) = \sx sy ->
+        Decoder $ \k -> unDecoder sx (\x -> unDecoder sy (\_ -> k x))
+
+instance Monad Decoder where
     return = pure
 
     {-# INLINE (>>=) #-}
-    (>>=) = \sm f -> DStream $ \k -> unDStream sm (\m -> unDStream (f m) k)
+    (>>=) = \sm f -> Decoder $ \k -> unDecoder sm (\m -> unDecoder (f m) k)
 
     {-# INLINE (>>) #-}
-    (>>) = \sm sn -> DStream $ \k -> unDStream sm (\_ -> unDStream sn k)
+    (>>) = (*>)
 
-    fail msg = DStream $ \_ -> DFail msg
+    fail msg = Decoder $ \_ -> DFail msg
 
-word8 :: DStream Word8
-word8 = DStream $ \k -> DWord8 (\x -> k (W8# x))
+------------------------------------------------------------------------------
+-- Bounded decoders
+------------------------------------------------------------------------------
 
-char :: DStream Char
-char = DStream $ \k -> DChar (\x -> k (C# x))
+data BoundedDecoder a = BoundedDecoder
+       { bdBound :: {-# UNPACK #-} !Int
+       , bdName  :: String
+       , bdFast  :: forall r.
+                       (String -> IO r)          -- failure
+                    -> (Ptr Word8 -> a -> IO r)  -- success
+                    -> Ptr Word8 -> IO r         -- IO-based decoder
+       , bdSlow  :: Decoder Word8 -> Decoder a
+       }
 
-{-# NOINLINE word8s #-}
-word8s :: DStream [Word8]
+instance Functor BoundedDecoder where
+    {-# INLINE fmap #-}
+    fmap = \f (BoundedDecoder n name fast slow) ->
+      BoundedDecoder n name
+        (\failure success -> fast failure (\ip' -> success ip' . f))
+        (\d8 -> f <$> slow d8)
+
+{-# INLINE bdWord16LE #-}
+bdWord16LE :: BoundedDecoder Word16
+bdWord16LE = BoundedDecoder 2 "Word16 (little-endian)"
+    (\_failure success ip -> do
+        x <- peek (castPtr ip :: Ptr Word16)
+        success (ip `plusPtr` 2) x
+    )
+    (\d8 -> do w0 <- d8
+               w1 <- d8
+               return $! fromIntegral w1 `shiftL` 8 .|. fromIntegral w0
+    )
+
+{-# INLINE bdWord64LE #-}
+bdWord64LE :: BoundedDecoder Word64
+bdWord64LE = BoundedDecoder 8 "Word64 (little-endian)"
+    (\_failure success ip -> do
+        x <- peek (castPtr ip :: Ptr Word64)
+        success (ip `plusPtr` 8) x
+    )
+    (\d8 -> do
+        w0 <- d8; w1 <- d8; w2 <- d8; w3 <- d8
+        w4 <- d8; w5 <- d8; w6 <- d8; w7 <- d8
+        return $! at 7 w0 .|.  at 6 w1 .|.  at 5 w2 .|.  at 4 w3 .|.
+                  at 3 w4 .|.  at 2 w5 .|.  at 1 w6 .|.  at 0 w7
+    )
+  where
+    {-# INLINE at #-}
+    at n x = fromIntegral x `shiftL` (n * 8)
+
+
+bdCharUtf8 :: BoundedDecoder Char
+bdCharUtf8 = BoundedDecoder 4 "Char (UTF-8)"
+    (\failure success ip ->  do
+        let peek8 = peekByteOff ip
+        w0 <- peek ip
+        case () of
+          _ | w0 < 0x80 -> do
+                success (ip `plusPtr` 1) (chr1 w0)
+
+            | w0 < 0xe0 -> do
+                w1 <- peek8 1
+                success (ip `plusPtr` 2) (chr2 w0 w1)
+
+            | w0 < 0xf0 -> do
+                w1 <- peek8 1; w2 <- peek8 2
+                success (ip `plusPtr` 3) (chr3 w0 w1 w2)
+
+            | otherwise -> do
+                w1 <- peek8 1; w2 <- peek8 2; w3 <- peek8 3
+                let x = chr4 w0 w1 w2 w3
+                if x <= 0x10ffff
+                  then success (ip `plusPtr` 4) (unsafeChr x)
+                  else failure $ "Invalid Unicode codepoint '" ++ show  x
+    )
+    (\d8 -> do
+        w0 <- d8
+        case () of
+          _ | w0 < 0x80 -> return (chr1 w0)
+            | w0 < 0xe0 -> chr2 w0 <$> d8
+            | w0 < 0xf0 -> chr3 w0 <$> d8 <*> d8
+            | otherwise -> do
+                x <- chr4 w0 <$> d8 <*> d8 <*> d8
+                if x <= 0x10ffff
+                  then return (unsafeChr x)
+                  else fail $ "Invalid Unicode codepoint '" ++ show  x
+    )
+  where
+    chr1 w0          = C# (chr1# w0)
+    chr2 w0 w1       = C# (chr2# w0 w1)
+    chr3 w0 w1 w2    = C# (chr3# w0 w1 w2)
+    chr4 w0 w1 w2 w3 = I# (chr4# w0 w1 w2 w3)
+    unsafeChr (I# i) = C# (chr# i)
+
+------------------------------------------------------------------------------
+-- Decoders for primitive values
+------------------------------------------------------------------------------
+
+word8 :: Decoder Word8
+word8 = Decoder $ \k -> DWord8 (\x -> k (W8# x))
+
+word16 :: Decoder Word16
+word16 = Decoder $ \k -> DWord16 (\x -> k (W16# x))
+
+word32 :: Decoder Word32
+word32 = Decoder $ \k -> DWord32 (\x -> k (W32# x))
+
+word64 :: Decoder Word64
+word64 = Decoder $ \k -> DWord64 (\x -> k (W64# x))
+
+word :: Decoder Word
+word = Decoder $ \k -> DWord (\x -> k (W# x))
+
+int8 :: Decoder Int8
+int8 = Decoder $ \k -> DInt8 (\x -> k (I8# x))
+
+int16 :: Decoder Int16
+int16 = Decoder $ \k -> DInt16 (\x -> k (I16# x))
+
+int32 :: Decoder Int32
+int32 = Decoder $ \k -> DInt32 (\x -> k (I32# x))
+
+int64 :: Decoder Int64
+int64 = Decoder $ \k -> DInt64 (\x -> k (I64# x))
+
+int :: Decoder Int
+int = Decoder $ \k -> DInt (\x -> k (I# x))
+
+integer :: Decoder Integer
+integer = Decoder $ \k -> DInteger k
+
+float :: Decoder Float
+float = Decoder $ \k -> DFloat (\x -> k (F# x))
+
+double :: Decoder Double
+double = Decoder $ \k -> DDouble (\x -> k (D# x))
+
+byteString :: Decoder S.ByteString
+byteString = Decoder $ \k -> DByteString k
+
+-- | Decode one 'Char'.
+char :: Decoder Char
+char = Decoder $ \k -> DChar (\x -> k (C# x))
+
+word8s :: Decoder [Word8]
 word8s = decodeList word8
 
-int :: DStream Int
-int = DStream $ \k -> DInt (\x -> k (I# x))
-
-string :: DStream String
+string :: Decoder String
 string = decodeList char
 
-listOfWord8s :: DStream [[Word8]]
+listOfWord8s :: Decoder [[Word8]]
 listOfWord8s = decodeList word8s
 
-{-# NOINLINE decodeList #-}
-decodeList :: DStream a -> DStream [a]
+------------------------------------------------------------------------------
+-- Decoder combinators
+------------------------------------------------------------------------------
+
+{-# INLINE decodeMaybe #-}
+decodeMaybe :: Decoder a -> Decoder (Maybe a)
+decodeMaybe just =
+    go
+  where
+    go = do tag <- word8
+            case tag of
+              0 -> return Nothing
+              1 -> Just <$> just
+              _ -> fail $ "decodeMaybe: unexpected tag " ++ show tag
+
+{-# INLINE decodeEither #-}
+decodeEither :: Decoder a -> Decoder b -> Decoder (Either a b)
+decodeEither left right =
+    go
+  where
+    go = do tag <- word8
+            case tag of
+              0 -> Left <$> left
+              1 -> Right <$> right
+              _ -> fail $ "decodeEither: unexpected tag " ++ show tag
+
+-- | Decode a list of values that were encoded in reverse order and with their
+-- size prefixed.
+decodeList :: Decoder a -> Decoder [a]
 decodeList decode =
     int >>= go []
   where
@@ -102,7 +318,7 @@ decodeList decode =
       | otherwise = do x <- decode; go (x:xs) (n - 1)
 
 -- {-# NOINLINE decodeList #-}
--- decodeList :: DStream a -> DStream [a]
+-- decodeList :: Decoder a -> Decoder [a]
 -- decodeList decode =
 --     int >>= go
 --   where
@@ -110,7 +326,7 @@ decodeList decode =
 --       | n <= 0    = return []
 --       | otherwise = force ((:) <$> decode <*> go (n - 1))
 
--- decodeList :: DStream a -> DStream [a]
+-- decodeList :: Decoder a -> Decoder [a]
 -- decodeList decode =
 --     go
 --   where
@@ -126,32 +342,39 @@ decodeList decode =
 -- built up. Note that flattening too early may result in an increased
 -- runtime, as then some arguments are copied multiple times.
 {-# INLINE force #-}
-force :: DStream a -> DStream a
-force ds = DStream $ \k -> unDStream ds (\x -> x `seq` (k x))
+force :: Decoder a -> Decoder a
+force ds = Decoder $ \k -> unDecoder ds (\x -> x `seq` (k x))
 
-decodeWith :: DStream a -> S.ByteString -> Either String a
-decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
+runDecoder :: Decoder a -> S.ByteString -> Either String a
+runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
     withForeignPtr fpbuf $ \pbuf -> do
       let !ip0 = pbuf `plusPtr` off
           !ipe = ip0 `plusPtr` len
 
           err :: String -> Ptr Word8 -> IO (Either String a)
-          err msg ip = return $ Left $ msg ++ 
-              " (at byte " ++ show (ip `minusPtr` ip0) ++ 
-              " of " ++ show len ++ ")" 
+          err msg ip = return $ Left $ msg ++
+              " (at byte " ++ show (ip `minusPtr` ip0) ++
+              " of " ++ show len ++ ")"
 
           unexpectedEOI loc =
               err ("unexpected end-of-input while decoding " ++  loc)
 
-          go :: Ptr Word8 -> DStreamRep a -> IO (Either String a)
+          go :: Ptr Word8 -> DStream a -> IO (Either String a)
           go !ip ds = case ds of
               DReturn x -> return $ Right x
 
               DFail msg -> err msg ip
 
-              DWord8  k -> readN 1 $ \ip' -> do (W8# x) <- peek $ castPtr ip
-                                                go ip' (k x)
+              DWord8  k
+                | ip < ipe  -> do (W8# x) <- peek $ castPtr ip
+                                  go (ip `plusPtr` 1) (k x)
+                | otherwise -> unexpectedEOI "Word8" ip
 
+              DInt k -> runBD (fromIntegral <$> bdWord64LE)
+                              (\ip' !(I# x#) -> go ip' (k x#))
+                              (\    !(I# x#) -> k x#         )
+
+{-
               DWord16 k -> readN 2 $ \ip' -> do (W16# x) <- peek $ castPtr ip
                                                 go ip' (k x)
 
@@ -161,7 +384,7 @@ decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
               DWord64 k -> readN 8 $ \ip' -> do (W64# x) <- peek $ castPtr ip
                                                 go ip' (k x)
 
-              DWord k -> readN (sizeOf (undefined :: Word)) $ \ip' -> do 
+              DWord k -> readN (sizeOf (undefined :: Word)) $ \ip' -> do
                   (W# x) <- peek $ castPtr ip
                   go ip' (k x)
 
@@ -174,15 +397,15 @@ decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
               DInt64 k -> readN 8 $ \ip' -> do (I64# x) <- peek $ castPtr ip
                                                go ip' (k x)
 
-              DInt k -> readN (sizeOf (undefined :: Int)) $ \ip' -> do 
+              DInt k -> readN (sizeOf (undefined :: Int)) $ \ip' -> do
                   (I# x) <- peek $ castPtr ip
                   go ip' (k x)
 
-              DFloat k -> readN (sizeOf (undefined :: Float)) $ \ip' -> do 
+              DFloat k -> readN (sizeOf (undefined :: Float)) $ \ip' -> do
                   (F# x) <- peek $ castPtr ip
                   go ip' (k x)
 
-              DDouble k -> readN (sizeOf (undefined :: Double)) $ \ip' -> do 
+              DDouble k -> readN (sizeOf (undefined :: Double)) $ \ip' -> do
                   (D# x) <- peek $ castPtr ip
                   go ip' (k x)
 
@@ -211,31 +434,43 @@ decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
                             go (ip `plusPtr` 4) (k c#)
 
                 | otherwise ->
-                    go ip (unDStream (slowCharUtf8 ip) (\ !(C# c#) -> k c#))
-
-              DSlowWord8 ipErr locErr k 
-                | ip < ipe  -> do x <- peek $ castPtr ip
+                    go ip (unDecoder (slowCharUtf8 ip) (\ !(C# c#) -> k c#))
+-}
+              DChar k -> runBD bdCharUtf8 (\ip' !(C# c#) -> go ip' (k c#))
+                                          (\    !(C# c#) -> k c#         )
+              DSlowWord8 ipErr locErr k
+                | ip < ipe  -> do x <- peek ip
                                   go (ip `plusPtr` 1) (k x)
                 | otherwise -> unexpectedEOI locErr ipErr
             where
+              {-# INLINE runBD #-}
+              runBD :: BoundedDecoder b
+                    -> (Ptr Word8 -> b -> IO (Either String a))
+                    -> (b -> DStream a)
+                    -> IO (Either String a)
+              runBD (BoundedDecoder n name fast slow) io k
+                | ip `plusPtr` n <= ipe = fast (`err` ip) io ip
+                | otherwise = go ip (unDecoder (slow (slowWord8 ip name)) k)
+
               {-# INLINE readN #-}
               readN :: Int
-                    -> (Ptr Word8 -> IO (Either String a)) 
+                    -> (Ptr Word8 -> IO (Either String a))
                     -> IO (Either String a)
               readN n io =
                   let ip' = ip `plusPtr` n in
-                  if ip' <= ipe 
-                    then io ip' 
+                  if ip' <= ipe
+                    then io ip'
                     else unexpectedEOI ("reading " ++ show n ++ " bytes") ip
-      
+
       -- start the decoding
-      go ip0 (unDStream ds0 DReturn)
+      go ip0 (unDecoder ds0 DReturn)
+
 {-
 {-# INLINE fastCharUtf8 #-}
 fastCharUtf8 :: Ptr Word8 -> State# RealWorld -> (# State RealWorld, Char# #)
-fastCharUtf8 ip = \s0 -> 
+fastCharUtf8 ip = \s0 ->
   case runIO (peek ip0) s0 of
-    (# s1, w0 #) 
+    (# s1, w0 #)
       | w0 < 0x80 -> (# s1, chr1 w0 #)
 
       | w0 < 0xe0 ->
@@ -254,23 +489,8 @@ fastCharUtf8 ip = \s0 ->
                 (# s4, w3 #) -> (# s4, chr4 w0 w1 w2 w3 #)
 -}
 
-slowCharUtf8 :: Ptr Word8 -> DStream Char
-slowCharUtf8 ip = do
-    w0 <- word8'
-    case () of
-      _ | w0 < 0x80 -> return (chr1 w0)
-        | w0 < 0xe0 -> chr2 w0 <$> word8'
-        | w0 < 0xf0 -> chr3 w0 <$> word8' <*> word8'
-        | otherwise -> chr4 w0 <$> word8' <*> word8' <*> word8'
-  where
-    word8'           = slowWord8 ip "char (UTF-8)"
-    chr1 w0          = C# (chr1# w0)
-    chr2 w0 w1       = C# (chr2# w0 w1)
-    chr3 w0 w1 w2    = C# (chr3# w0 w1 w2)
-    chr4 w0 w1 w2 w3 = C# (chr4# w0 w1 w2 w3)
-
-slowWord8 :: Ptr Word8 -> String -> DStream Word8
-slowWord8 ip msg = DStream (\k -> DSlowWord8 ip msg k)
+slowWord8 :: Ptr Word8 -> String -> Decoder Word8
+slowWord8 ip msg = Decoder (\k -> DSlowWord8 ip msg k)
 
 {-
 data Res a = Res !a {-# UNPACK #-} !(Ptr Word8)
@@ -320,7 +540,7 @@ requires n p = Parser $ \buf@(Buffer ip ipe) ->
     if ipe `minusPtr` ip >= n
       then unParser p buf
       else throw $ (`ParseException` ip) $
-             "required " ++ show n ++ 
+             "required " ++ show n ++
              " bytes, but there are only " ++ show (ipe `minusPtr` ip) ++
              " bytes left."
 
@@ -378,7 +598,7 @@ chr1# (W8# x#) = (chr# (word2Int# x#))
 {-# INLINE chr1# #-}
 
 chr2# :: Word8 -> Word8 -> Char#
-chr2# (W8# x1#) (W8# x2#) = 
+chr2# (W8# x1#) (W8# x2#) =
     (chr# (z1# +# z2#))
   where
     !y1# = word2Int# x1#
@@ -388,7 +608,7 @@ chr2# (W8# x1#) (W8# x2#) =
 {-# INLINE chr2# #-}
 
 chr3# :: Word8 -> Word8 -> Word8 -> Char#
-chr3# (W8# x1#) (W8# x2#) (W8# x3#) = 
+chr3# (W8# x1#) (W8# x2#) (W8# x3#) =
     (chr# (z1# +# z2# +# z3#))
   where
     !y1# = word2Int# x1#
@@ -399,9 +619,9 @@ chr3# (W8# x1#) (W8# x2#) (W8# x3#) =
     !z3# = y3# -# 0x80#
 {-# INLINE chr3# #-}
 
-chr4# :: Word8 -> Word8 -> Word8 -> Word8 -> Char#
+chr4# :: Word8 -> Word8 -> Word8 -> Word8 -> Int#
 chr4# (W8# x1#) (W8# x2#) (W8# x3#) (W8# x4#) =
-    (chr# (z1# +# z2# +# z3# +# z4#))
+    (z1# +# z2# +# z3# +# z4#)
   where
     !y1# = word2Int# x1#
     !y2# = word2Int# x2#

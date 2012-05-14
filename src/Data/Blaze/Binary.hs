@@ -32,7 +32,7 @@ module Data.Blaze.Binary (
 
 import Control.Applicative
 
-import qualified Data.Blaze.Binary.Encoder
+import qualified Data.Blaze.Binary.Encoder as E
 import qualified Data.Blaze.Binary.Decoder as D
 
 import Data.Word
@@ -69,11 +69,11 @@ import GHC.Generics
 -- 'encode' and 'decode'.
 class Binary t where
     -- | Encode a value in the Put monad.
-    encode :: Encoding t
+    encode :: E.Encoder t
     decode :: D.Decoder t
 
 #ifdef GENERICS
-    default encode :: (Generic t, GBinary (Rep t)) => Encoding t
+    default encode :: (Generic t, GBinary (Rep t)) => E.Encoder t
     encode = gEncode . from
     {-# INLINE encode #-}
 
@@ -90,7 +90,7 @@ toByteString = S.concat . L.toChunks . toLazyByteString
 
 -- | Encode a value to a lazy 'L.ByteString'.
 toLazyByteString :: Binary t => t -> L.ByteString
-toLazyByteString = B.toLazyByteString . render . encode
+toLazyByteString = B.toLazyByteString . E.render . encode
 
 ------------------------------------------------------------------------
 -- Simple instances
@@ -109,7 +109,7 @@ instance Binary () where
 -- Bools are encoded as a byte in the range 0 .. 1
 instance Binary Bool where
     {-# INLINE encode #-}
-    encode = \x -> word8 (if x then 1 else 0)
+    encode = \x -> E.word8 (if x then 1 else 0)
     decode = do tag <- D.word8
                 case tag of
                   0 -> return False
@@ -119,7 +119,7 @@ instance Binary Bool where
 -- Values of type 'Ordering' are encoded as a byte in the range 0 .. 2
 instance Binary Ordering where
     {-# INLINE encode #-}
-    encode = \x -> word8 (case x of LT -> 0; EQ -> 1; GT -> 2)
+    encode = \x -> E.word8 (case x of LT -> 0; EQ -> 1; GT -> 2)
     decode = do tag <- D.word8
                 case tag of
                   0 -> return LT
@@ -133,56 +133,56 @@ instance Binary Ordering where
 -- Words8s are written as bytes
 instance Binary Word8 where
     {-# INLINE encode #-}
-    encode = word8
+    encode = E.word8
     {-# INLINE decode #-}
     decode = D.word8
 
 -- Words16s are written as 2 bytes in big-endian (network) order
 instance Binary Word16 where
     {-# INLINE encode #-}
-    encode  = word16
+    encode  = E.word16
     {-# INLINE decode #-}
     decode = D.word16
 
 -- Words32s are written as 4 bytes in big-endian (network) order
 instance Binary Word32 where
     {-# INLINE encode #-}
-    encode     = word32
+    encode = E.word32
     {-# INLINE decode #-}
     decode = D.word32
 
 -- Words64s are written as 8 bytes in big-endian (network) order
 instance Binary Word64 where
     {-# INLINE encode #-}
-    encode     = word64
+    encode = E.word64
     {-# INLINE decode #-}
     decode = D.word64
 
 -- Int8s are written as a single byte.
 instance Binary Int8 where
     {-# INLINE encode #-}
-    encode     = int8
+    encode = E.int8
     {-# INLINE decode #-}
     decode = D.int8
 
 -- Int16s are written as a 2 bytes in big endian format
 instance Binary Int16 where
     {-# INLINE encode #-}
-    encode     = int16
+    encode = E.int16
     {-# INLINE decode #-}
     decode = D.int16
 
 -- Int32s are written as a 4 bytes in big endian format
 instance Binary Int32 where
     {-# INLINE encode #-}
-    encode     = int32
+    encode = E.int32
     {-# INLINE decode #-}
     decode = D.int32
 
 -- Int64s are written as a 8 bytes in big endian format
 instance Binary Int64 where
     {-# INLINE encode #-}
-    encode     = int64
+    encode = E.int64
     {-# INLINE decode #-}
     decode = D.int64
 
@@ -191,30 +191,31 @@ instance Binary Int64 where
 -- Words are are written as Word64s, that is, 8 bytes in big endian format
 instance Binary Word where
     {-# INLINE encode #-}
-    encode   = word
+    encode = E.word
     {-# INLINE decode #-}
     decode = D.word
 
 -- Ints are are written as Int64s, that is, 8 bytes in big endian format
 instance Binary Int where
     {-# INLINE encode #-}
-    encode  = int
+    encode = E.int
     {-# INLINE decode #-}
     decode = D.int
 
 instance Binary Integer where
     {-# INLINE encode #-}
-    encode = integer
-    decode = error "TODO: decode Integer!"
+    encode = E.integer
+    decode = D.integer
 
 instance (Binary a, Integral a) => Binary (R.Ratio a) where
     {-# INLINE encode #-}
-    encode = \r -> encode (R.numerator r, R.denominator r)
-    decode = error "TODO: decode Ratio!"
+    encode = \r -> encode (R.numerator r) <> encode (R.denominator r)
+    {-# INLINE decode #-}
+    decode = (R.%) <$> decode <*> decode
 
 instance Binary Char where
     {-# INLINE encode #-}
-    encode = char
+    encode = E.char
     {-# INLINE decode #-}
     decode = D.char
 
@@ -280,19 +281,19 @@ instance (Binary a, Binary b, Binary c, Binary d, Binary e,
 
 instance Binary a => Binary [a] where
     {-# INLINE encode #-}
-    encode = encodeList encode
+    encode = E.encodeList encode
     {-# INLINE decode #-}
     decode = D.decodeList decode
 
 instance (Binary a) => Binary (Maybe a) where
     {-# INLINE encode #-}
-    encode = maybe (word8 0) ((word8 1 <>) . encode)
+    encode = maybe (E.word8 0) ((E.word8 1 <>) . encode)
     {-# INLINE decode #-}
     decode = D.decodeMaybe decode
 
 instance (Binary a, Binary b) => Binary (Either a b) where
     {-# INLINE encode #-}
-    encode = either ((word8 0 <>) . encode) ((word8 1 <>) . encode)
+    encode = either ((E.word8 0 <>) . encode) ((E.word8 1 <>) . encode)
     {-# INLINE decode #-}
     decode = D.decodeEither decode decode
 
@@ -301,7 +302,7 @@ instance (Binary a, Binary b) => Binary (Either a b) where
 
 instance Binary S.ByteString where
     {-# INLINE encode #-}
-    encode = byteString
+    encode = E.byteString
     {-# INLINE decode #-}
     decode = D.byteString
 
@@ -345,7 +346,7 @@ instance (Binary e) => Binary (IntMap.IntMap e) where
 
 instance (Binary e) => Binary (Seq.Seq e) where
     {-# INLINE encode #-}
-    encode = \s -> int (Seq.length s) <> foldMap encode s
+    encode = \s -> E.int (Seq.length s) <> foldMap encode s
     {-# INLINE decode #-}
     decode = do
         D.int >>= go Seq.empty
@@ -362,13 +363,13 @@ instance (Binary e) => Binary (Seq.Seq e) where
 
 instance Binary Double where
     {-# INLINE encode #-}
-    encode = double
+    encode = E.double
     {-# INLINE decode #-}
     decode = D.double
 
 instance Binary Float where
     {-# INLINE encode #-}
-    encode = float
+    encode = E.float
     {-# INLINE decode #-}
     decode = D.float
 
@@ -380,7 +381,7 @@ instance (Binary e) => Binary (T.Tree e) where
     encode =
         go
       where
-        go (T.Node x cs) = encode x <> encodeList go cs
+        go (T.Node x cs) = encode x <> E.encodeList go cs
 
     {-# INLINE decode #-}
     decode =
@@ -412,7 +413,7 @@ instance (Binary i, Ix i, Binary e, IArray UArray e) => Binary (UArray i e) wher
 -- Generic Binary
 
 class GBinary f where
-    gEncode :: Encoding  (f a)
+    gEncode :: E.Encoder  (f a)
     gDecode :: D.Decoder (f a)
 
 instance GBinary a => GBinary (M1 i c a) where
@@ -471,7 +472,7 @@ sizeError s size = error $ "Can't " ++ s ++ " a type with " ++ show size ++ " co
 ------------------------------------------------------------------------
 
 class EncodeSum f where
-    encodeSum :: (Num word, Bits word, Binary word) => word -> word -> Encoding (f a)
+    encodeSum :: (Num word, Bits word, Binary word) => word -> word -> E.Encoder (f a)
 
 instance (EncodeSum a, EncodeSum b, GBinary a, GBinary b) => EncodeSum (a :+: b) where
     encodeSum !tag !size s = case s of

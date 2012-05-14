@@ -33,9 +33,9 @@ library
         hs-source-dirs:         src
 
         exposed-modules:        
-                                -- Data.Blaze.Binary
+                                Data.Blaze.Binary
                                 Data.Blaze.Binary.Encoder
-                                -- Data.Blaze.Binary.Decoder
+                                Data.Blaze.Binary.Decoder
 
         ghc-options:            -Wall
         ghc-prof-options:       -prof -auto-all
