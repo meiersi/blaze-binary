@@ -21,13 +21,15 @@ import           Criterion.Main
 import           Control.DeepSeq
 import           Control.Applicative
 
-import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
-import qualified Data.Blaze.Binary.Encoding as E (word8)
-import qualified Data.Blaze.Binary.Decoding as D (word8)
-import qualified Data.Blaze.Binary.Decoding       as Blaze (Decoder, runDecoder)
-import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s, string)
-import qualified Data.Blaze.Binary.IterDecoding   as IterBlaze (DStream, decodeWith, word8s, string, listOfWord8s )
-import qualified Data.Blaze.Binary.StreamDecoding as StreamBlaze (benchWord8s)
+-- import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
+import qualified Data.Blaze.Binary         as Blaze
+import qualified Data.Blaze.Binary.Encoder as BlazeE
+import qualified Data.Blaze.Binary.Decoder as BlazeD
+-- import qualified Data.Blaze.Binary.Decoding as D (word8)
+-- import qualified Data.Blaze.Binary.Decoding       as Blaze (Decoder, runDecoder)
+-- import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s, string)
+-- import qualified Data.Blaze.Binary.IterDecoding   as IterBlaze (DStream, decodeWith, word8s, string, listOfWord8s )
+-- import qualified Data.Blaze.Binary.StreamDecoding as StreamBlaze (benchWord8s)
 import qualified Data.ByteString             as S
 import qualified Data.ByteString.Internal    as S
 import qualified Data.ByteString.Lazy        as L
@@ -100,46 +102,71 @@ charData n = take n ['\0'..]
 
 -- benchmarks
 -------------
-
 main :: IO ()
 main = Criterion.Main.defaultMain $
     [ bgroup ("decode (" ++ show nRepl ++ ")")
-       -- [ bench "param-blaze-binary: word8s" $ nf 
-       --     (benchParamDecoder ParamBlaze.word8s . S.copy) 
+       -- [ bench "param-blaze-binary: word8s" $ nf
+       --     (benchParamDecoder ParamBlaze.word8s . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
-       [ bench "iter-blaze-binary: word8s" $ nf 
-           (benchIterDecoder IterBlaze.word8s) 
+       [ bench "iter-blaze-binary: [Int]" $ nf
+           (Blaze.fromByteString :: S.ByteString -> Either String [Int])
+           (Blaze.toByteString $ intData nRepl)
+       , bench "iter-blaze-binary: [Word8]" $ nf
+           (Blaze.fromByteString :: S.ByteString -> Either String [Word8])
            (Blaze.toByteString $ word8Data nRepl)
+       , bench "binary-cps: [Word8]" $ nf
+           (Binary.decode :: L.ByteString -> [Word8])
+           (Binary.encode $ word8Data nRepl)
+       , bench "iter-blaze-binary: [[Word8]]" $ nf
+           (Blaze.fromByteString :: S.ByteString -> Either String [[Word8]])
+           (Blaze.toByteString $ word8sData nRepl)
+       , bench "binary-cps: [[Word8]]" $ nf
+           (Binary.decode :: L.ByteString -> [[Word8]])
+           (Binary.encode $ word8sData nRepl)
+       ]
+    ]
+{-
+main :: IO ()
+main = Criterion.Main.defaultMain $
+    [ bgroup ("decode (" ++ show nRepl ++ ")")
+       -- [ bench "param-blaze-binary: word8s" $ nf
+       --     (benchParamDecoder ParamBlaze.word8s . S.copy)
+       --     (Blaze.toByteString $ word8Data nRepl)
+       [ bench "iter-blaze-binary: word8s" $ nf
+           (Blaze.fromByteString :: S.ByteString -> Either String [Word8])
+           (Blaze.toByteString $ word8Data nRepl)
+       ]
+       {-
        , bench "binary-cps: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
-       , bench "iter-blaze-binary: [word8s]" $ nf 
-           (benchIterDecoder IterBlaze.listOfWord8s) 
+       , bench "iter-blaze-binary: [word8s]" $ nf
+           (benchIterDecoder IterBlaze.listOfWord8s)
            (Blaze.toByteString $ word8sData nRepl)
        , bench "binary-cps: [word8s]" $ nf (Binary.decode :: L.ByteString -> [[Word8]]) (Binary.encode $ word8sData nRepl)
-       -- , bench "attoparsec-noinline: word8s" $ nf 
+       -- , bench "attoparsec-noinline: word8s" $ nf
        --     (benchAttoparsec attoBinaryWord8sNoInline)
        --     (Blaze.toByteString $ word8Data nRepl)
-       -- , bench "param-blaze-binary: string" $ nf 
-       --     (benchParamDecoder ParamBlaze.string) 
+       -- , bench "param-blaze-binary: string" $ nf
+       --     (benchParamDecoder ParamBlaze.string)
        --     (Blaze.toByteString $ charData nRepl)
-       , bench "iter-blaze-binary: string" $ nf 
-           (benchIterDecoder IterBlaze.string) 
+       , bench "iter-blaze-binary: string" $ nf
+           (benchIterDecoder IterBlaze.string)
            (Blaze.toByteString $ charData nRepl)
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
        , bench "binary-cps: string" $ nf (Binary.decode :: L.ByteString -> String) (Binary.encode $ charData nRepl)
-       -- , bench "stream-blaze-binary: word8s" $ nf 
+       -- , bench "stream-blaze-binary: word8s" $ nf
        --     (StreamBlaze.benchWord8s . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
-       -- , bench "blaze-binary: word8s" $ nf 
+       -- , bench "blaze-binary: word8s" $ nf
        --     (benchDecoder (Blaze.decode :: Blaze.Decoder [Word8]) . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
 
-       -- , bench "blaze-binary: string" $ nf 
+       -- , bench "blaze-binary: string" $ nf
        --     (benchDecoder (Blaze.decode :: Blaze.Decoder String))
        --     (Blaze.toByteString $ charData nRepl)
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
-       -- , bench "attoparsec-inlined: word8s" $ nf 
+       -- , bench "attoparsec-inlined: word8s" $ nf
        --     (benchAttoparsec attoBinaryWord8s)
        --     (Blaze.toByteString $ word8Data nRepl)
 {- =======
@@ -190,6 +217,7 @@ main = Criterion.Main.defaultMain $
       , benchmarks "Seq Int "   id        (seqIntData nRepl)
       , benchmarks "[Int] "     id        (intData nRepl)
       ]
+    -}
 
 #ifdef GENERICS
     , bgroup "generic"
@@ -485,3 +513,4 @@ instance Blaze.Binary BigSum' where
           f 80 = C'80; f 81= C'81; f 82= C'82; f 83= C'83; f 84= C'84; f 85= C'85; f 86= C'86; f 87= C'87; f 88= C'88; f 89= C'89
           f 90 = C'90; f 91= C'91; f 92= C'92; f 93= C'93; f 94= C'94; f 95= C'95; f 96= C'96; f 97= C'97; f 98= C'98; f 99= C'99
 #endif
+-}
