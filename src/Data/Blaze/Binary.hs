@@ -28,6 +28,9 @@ module Data.Blaze.Binary (
     , toByteString
     , toLazyByteString
 
+    , fromByteString
+    , fromLazyByteString
+
     ) where
 
 import Control.Applicative
@@ -91,6 +94,17 @@ toByteString = S.concat . L.toChunks . toLazyByteString
 -- | Encode a value to a lazy 'L.ByteString'.
 toLazyByteString :: Binary t => t -> L.ByteString
 toLazyByteString = B.toLazyByteString . E.render . encode
+
+-- | Decode a value from a strict 'S.ByteString'.
+-- TODO: Return unparsed input.
+fromByteString :: Binary t => S.ByteString -> Either String t
+fromByteString = D.runDecoder decode
+
+-- | Decode a value from a lazy 'L.ByteString'.
+-- TODO: Return unparsed input.
+fromLazyByteString :: Binary t => L.ByteString -> Either String t
+fromLazyByteString = fromByteString . S.concat . L.toChunks
+
 
 ------------------------------------------------------------------------
 -- Simple instances

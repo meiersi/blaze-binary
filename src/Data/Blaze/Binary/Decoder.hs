@@ -314,7 +314,7 @@ decodeList decode =
     int >>= go []
   where
     go xs !n
-      | n <= 0    = return []
+      | n <= 0    = return xs
       | otherwise = do x <- decode; go (x:xs) (n - 1)
 
 -- {-# NOINLINE decodeList #-}
