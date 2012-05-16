@@ -4,7 +4,7 @@
 -- Module      : Data.Blaze.Binary.Encoding
 -- Copyright   : 2012, Simon Meier <iridcode@gmail.com>
 -- License     : BSD3-style (see LICENSE)
--- 
+--
 -- Maintainer  : Simon Meier <iridcode@gmail.com>
 -- Stability   :
 -- Portability : portable
@@ -20,13 +20,13 @@ import Control.Applicative
 
 import qualified Data.ByteString.Internal as S
 
-import Foreign 
+import Foreign
 import GHC.Word
 import GHC.Int
 import GHC.Prim
 import GHC.Types
 
-data DStreamRep a = 
+data DStreamRep a =
        DWord8                          (Word#        -> DStreamRep a)
      | DInt                            (Int#         -> DStreamRep a)
      | DChar                           (Char#        -> DStreamRep a)
@@ -46,14 +46,14 @@ data DStreamRep a =
      | DFail       String
      | DReturn a
 
-newtype DStream a = DStream { 
+newtype DStream a = DStream {
           unDStream :: forall r. (a -> DStreamRep r) -> DStreamRep r
         }
 
 instance Functor DStream where
     {-# INLINE fmap #-}
     fmap f = \s -> DStream $ \k -> unDStream s (k . f)
- 
+
 instance Applicative DStream where
     {-# INLINE pure #-}
     pure = \x -> DStream $ \k -> k x
@@ -98,7 +98,7 @@ decodeList decode =
     int >>= go []
   where
     go xs !n
-      | n <= 0    = return []
+      | n <= 0    = return xs
       | otherwise = do x <- decode; go (x:xs) (n - 1)
 
 -- {-# NOINLINE decodeList #-}
@@ -136,9 +136,9 @@ decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
           !ipe = ip0 `plusPtr` len
 
           err :: String -> Ptr Word8 -> IO (Either String a)
-          err msg ip = return $ Left $ msg ++ 
-              " (at byte " ++ show (ip `minusPtr` ip0) ++ 
-              " of " ++ show len ++ ")" 
+          err msg ip = return $ Left $ msg ++
+              " (at byte " ++ show (ip `minusPtr` ip0) ++
+              " of " ++ show len ++ ")"
 
           unexpectedEOI loc =
               err ("unexpected end-of-input while decoding " ++  loc)
@@ -161,7 +161,7 @@ decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
               DWord64 k -> readN 8 $ \ip' -> do (W64# x) <- peek $ castPtr ip
                                                 go ip' (k x)
 
-              DWord k -> readN (sizeOf (undefined :: Word)) $ \ip' -> do 
+              DWord k -> readN (sizeOf (undefined :: Word)) $ \ip' -> do
                   (W# x) <- peek $ castPtr ip
                   go ip' (k x)
 
@@ -174,15 +174,15 @@ decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
               DInt64 k -> readN 8 $ \ip' -> do (I64# x) <- peek $ castPtr ip
                                                go ip' (k x)
 
-              DInt k -> readN (sizeOf (undefined :: Int)) $ \ip' -> do 
+              DInt k -> readN (sizeOf (undefined :: Int)) $ \ip' -> do
                   (I# x) <- peek $ castPtr ip
                   go ip' (k x)
 
-              DFloat k -> readN (sizeOf (undefined :: Float)) $ \ip' -> do 
+              DFloat k -> readN (sizeOf (undefined :: Float)) $ \ip' -> do
                   (F# x) <- peek $ castPtr ip
                   go ip' (k x)
 
-              DDouble k -> readN (sizeOf (undefined :: Double)) $ \ip' -> do 
+              DDouble k -> readN (sizeOf (undefined :: Double)) $ \ip' -> do
                   (D# x) <- peek $ castPtr ip
                   go ip' (k x)
 
@@ -213,29 +213,29 @@ decodeWith ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
                 | otherwise ->
                     go ip (unDStream (slowCharUtf8 ip) (\ !(C# c#) -> k c#))
 
-              DSlowWord8 ipErr locErr k 
+              DSlowWord8 ipErr locErr k
                 | ip < ipe  -> do x <- peek $ castPtr ip
                                   go (ip `plusPtr` 1) (k x)
                 | otherwise -> unexpectedEOI locErr ipErr
             where
               {-# INLINE readN #-}
               readN :: Int
-                    -> (Ptr Word8 -> IO (Either String a)) 
+                    -> (Ptr Word8 -> IO (Either String a))
                     -> IO (Either String a)
               readN n io =
                   let ip' = ip `plusPtr` n in
-                  if ip' <= ipe 
-                    then io ip' 
+                  if ip' <= ipe
+                    then io ip'
                     else unexpectedEOI ("reading " ++ show n ++ " bytes") ip
-      
+
       -- start the decoding
       go ip0 (unDStream ds0 DReturn)
 {-
 {-# INLINE fastCharUtf8 #-}
 fastCharUtf8 :: Ptr Word8 -> State# RealWorld -> (# State RealWorld, Char# #)
-fastCharUtf8 ip = \s0 -> 
+fastCharUtf8 ip = \s0 ->
   case runIO (peek ip0) s0 of
-    (# s1, w0 #) 
+    (# s1, w0 #)
       | w0 < 0x80 -> (# s1, chr1 w0 #)
 
       | w0 < 0xe0 ->
@@ -320,7 +320,7 @@ requires n p = Parser $ \buf@(Buffer ip ipe) ->
     if ipe `minusPtr` ip >= n
       then unParser p buf
       else throw $ (`ParseException` ip) $
-             "required " ++ show n ++ 
+             "required " ++ show n ++
              " bytes, but there are only " ++ show (ipe `minusPtr` ip) ++
              " bytes left."
 
@@ -378,7 +378,7 @@ chr1# (W8# x#) = (chr# (word2Int# x#))
 {-# INLINE chr1# #-}
 
 chr2# :: Word8 -> Word8 -> Char#
-chr2# (W8# x1#) (W8# x2#) = 
+chr2# (W8# x1#) (W8# x2#) =
     (chr# (z1# +# z2#))
   where
     !y1# = word2Int# x1#
@@ -388,7 +388,7 @@ chr2# (W8# x1#) (W8# x2#) =
 {-# INLINE chr2# #-}
 
 chr3# :: Word8 -> Word8 -> Word8 -> Char#
-chr3# (W8# x1#) (W8# x2#) (W8# x3#) = 
+chr3# (W8# x1#) (W8# x2#) (W8# x3#) =
     (chr# (z1# +# z2# +# z3#))
   where
     !y1# = word2Int# x1#
