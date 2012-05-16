@@ -55,6 +55,7 @@ import Prelude hiding (catch)
 
 import Control.Applicative
 
+import qualified Data.ByteString          as S
 import qualified Data.ByteString.Internal as S
 
 import Foreign
@@ -118,6 +119,7 @@ instance Applicative Decoder where
         Decoder $ \k -> unDecoder sx (\x -> unDecoder sy (\_ -> k x))
 
 instance Monad Decoder where
+    {-# INLINE return #-}
     return = pure
 
     {-# INLINE (>>=) #-}
@@ -279,13 +281,12 @@ string :: Decoder String
 string = decodeList char
 
 listOfWord8s :: Decoder [[Word8]]
-listOfWord8s = decodeList word8s
+listOfWord8s = decodeList (decodeList word8)
 
 ------------------------------------------------------------------------------
 -- Decoder combinators
 ------------------------------------------------------------------------------
 
-{-# INLINE decodeMaybe #-}
 decodeMaybe :: Decoder a -> Decoder (Maybe a)
 decodeMaybe just =
     go
@@ -296,7 +297,6 @@ decodeMaybe just =
               1 -> Just <$> just
               _ -> fail $ "decodeMaybe: unexpected tag " ++ show tag
 
-{-# INLINE decodeEither #-}
 decodeEither :: Decoder a -> Decoder b -> Decoder (Either a b)
 decodeEither left right =
     go
@@ -309,6 +309,7 @@ decodeEither left right =
 
 -- | Decode a list of values that were encoded in reverse order and with their
 -- size prefixed.
+-- {-# NOINLINE decodeList #-}
 decodeList :: Decoder a -> Decoder [a]
 decodeList decode =
     int >>= go []
@@ -317,7 +318,6 @@ decodeList decode =
       | n <= 0    = return xs
       | otherwise = do x <- decode; go (x:xs) (n - 1)
 
--- {-# NOINLINE decodeList #-}
 -- decodeList :: Decoder a -> Decoder [a]
 -- decodeList decode =
 --     int >>= go
@@ -346,10 +346,12 @@ force :: Decoder a -> Decoder a
 force ds = Decoder $ \k -> unDecoder ds (\x -> x `seq` (k x))
 
 runDecoder :: Decoder a -> S.ByteString -> Either String a
+-- FIXME: Make this proper.
+runDecoder _ bs | S.length bs < 4 = Left "too short input"
 runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
     withForeignPtr fpbuf $ \pbuf -> do
-      let !ip0 = pbuf `plusPtr` off
-          !ipe = ip0 `plusPtr` len
+      let !ip0 = pbuf `plusPtr` (off + 4)
+          !ipe = ip0 `plusPtr` (len - 4)
 
           err :: String -> Ptr Word8 -> IO (Either String a)
           err msg ip = return $ Left $ msg ++
@@ -370,9 +372,12 @@ runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
                                   go (ip `plusPtr` 1) (k x)
                 | otherwise -> unexpectedEOI "Word8" ip
 
-              DInt k -> runBD (fromIntegral <$> bdWord64LE)
-                              (\ip' !(I# x#) -> go ip' (k x#))
-                              (\    !(I# x#) -> k x#         )
+              -- DInt k -> runBD (fromIntegral <$> bdWord64LE)
+              --                 (\ip' !(I# x#) -> go ip' (k x#))
+              --                 (\    !(I# x#) -> k x#         )
+              DInt k -> readN (sizeOf (undefined :: Int)) $ \ip' -> do
+                  (I# x) <- peek $ castPtr ip
+                  go ip' (k x)
 
 {-
               DWord16 k -> readN 2 $ \ip' -> do (W16# x) <- peek $ castPtr ip

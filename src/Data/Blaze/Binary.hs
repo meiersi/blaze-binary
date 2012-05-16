@@ -296,7 +296,6 @@ instance (Binary a, Binary b, Binary c, Binary d, Binary e,
 instance Binary a => Binary [a] where
     {-# INLINE encode #-}
     encode = E.encodeList encode
-    {-# INLINE decode #-}
     decode = D.decodeList decode
 
 instance (Binary a) => Binary (Maybe a) where

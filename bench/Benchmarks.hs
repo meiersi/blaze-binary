@@ -96,6 +96,7 @@ word8Data n = take n $ cycle [(0::Word8)..]
 
 word8sData :: Int -> [[Word8]]
 word8sData n = take n $ cycle [[1..5], [101..105]]
+-- word8sData n = take n $ repeat [1]
 
 charData :: Int -> String
 charData n = take n ['\0'..]
@@ -108,23 +109,29 @@ main = Criterion.Main.defaultMain $
        -- [ bench "param-blaze-binary: word8s" $ nf
        --     (benchParamDecoder ParamBlaze.word8s . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
-       [ bench "iter-blaze-binary: [Int]" $ nf
-           (Blaze.fromByteString :: S.ByteString -> Either String [Int])
-           (Blaze.toByteString $ intData nRepl)
-       , bench "iter-blaze-binary: [Word8]" $ nf
-           (Blaze.fromByteString :: S.ByteString -> Either String [Word8])
+       [ bench "iter-blaze-binary: [Word8]" $ nf
+           (benchBlazeDecoder (Blaze.decode :: BlazeD.Decoder [Word8]))
            (Blaze.toByteString $ word8Data nRepl)
        , bench "binary-cps: [Word8]" $ nf
            (Binary.decode :: L.ByteString -> [Word8])
            (Binary.encode $ word8Data nRepl)
        , bench "iter-blaze-binary: [[Word8]]" $ nf
-           (Blaze.fromByteString :: S.ByteString -> Either String [[Word8]])
+           (benchBlazeDecoder BlazeD.listOfWord8s)
+           -- (Blaze.fromByteString :: S.ByteString -> Either String [[Word8]])
            (Blaze.toByteString $ word8sData nRepl)
        , bench "binary-cps: [[Word8]]" $ nf
            (Binary.decode :: L.ByteString -> [[Word8]])
            (Binary.encode $ word8sData nRepl)
+       --, bench "iter-blaze-binary: [Int]" $ nf
+       --    (Blaze.fromByteString :: S.ByteString -> Either String [Int])
+       --    (Blaze.toByteString $ intData nRepl)
        ]
     ]
+  where
+    benchBlazeDecoder :: BlazeD.Decoder a -> S.ByteString -> a
+    benchBlazeDecoder d bs = case BlazeD.runDecoder d bs of
+      Left msg -> error msg
+      Right x  -> x
 {-
 main :: IO ()
 main = Criterion.Main.defaultMain $

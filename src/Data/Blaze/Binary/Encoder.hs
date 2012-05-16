@@ -68,6 +68,7 @@ import qualified Data.ByteString.Lazy.Builder.Internal               as B
 import qualified Data.ByteString.Lazy.Builder.BasicEncoding          as E
 import qualified Data.ByteString.Lazy.Builder.BasicEncoding.Internal as E
 import           Data.Monoid
+import           Data.Foldable (foldMap)
 import           Data.Word
 import           Data.Int
 import           Foreign.Ptr
@@ -135,7 +136,7 @@ renderWith formatId w8 w16 w32 w64 w i8 i16 i32 i64 i c f d ibig bs _b =
     \vs0 -> prefix <> B.builder (step (toStreamRep vs0 EEmpty))
   where
     prefix = B.word8 0xce <> B.word8 0xbb <> B.word8 0x2e <> B.word8 formatId
-   
+
     step vs1 k (B.BufferRange op0 ope0) =
         go vs1 op0
       where
@@ -361,7 +362,7 @@ builder = Stream . EBuilder
 -- We prefix the list with its length and encode its values in reverse order.
 -- The reverse order slightly speeds-up decoding and does not really cost on
 -- encoding.
-{-# INLINE encodeList #-}
+-- {-# INLINE encodeList #-}
 encodeList :: Encoder a -> Encoder [a]
 encodeList f =
     go (0 :: Int) mempty
@@ -376,7 +377,7 @@ encodeList f =
 -- ^ Tagged encoding: works in a streaming fashion but requires more space and
 -- is more expensive to decode.
 
--- encodeList = \f xs -> encode (length xs) <> foldMap f xs
+-- encodeList = \f xs -> int (length xs) <> foldMap f xs
 --
 -- ^ Length-prefixing and standard-order encoding of the list elements. This
 -- is slightly more expensive to decode as then the reversal has to be made
