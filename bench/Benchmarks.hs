@@ -109,7 +109,13 @@ main = Criterion.Main.defaultMain $
        -- [ bench "param-blaze-binary: word8s" $ nf
        --     (benchParamDecoder ParamBlaze.word8s . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
-       [ bench "iter-blaze-binary: [Word8]" $ nf
+       [ bench "iter-blaze-binary: [Int]" $ nf
+           (Blaze.fromByteString :: S.ByteString -> Either String [Int])
+           (Blaze.toByteString $ intData nRepl)
+       , bench "binary-cps: [Int]" $ nf
+           (Binary.decode :: L.ByteString -> [Int])
+           (Binary.encode $ intData nRepl)
+       , bench "iter-blaze-binary: [Word8]" $ nf
            (benchBlazeDecoder (Blaze.decode :: BlazeD.Decoder [Word8]))
            (Blaze.toByteString $ word8Data nRepl)
        , bench "binary-cps: [Word8]" $ nf
@@ -122,9 +128,6 @@ main = Criterion.Main.defaultMain $
        , bench "binary-cps: [[Word8]]" $ nf
            (Binary.decode :: L.ByteString -> [[Word8]])
            (Binary.encode $ word8sData nRepl)
-       --, bench "iter-blaze-binary: [Int]" $ nf
-       --    (Blaze.fromByteString :: S.ByteString -> Either String [Int])
-       --    (Blaze.toByteString $ intData nRepl)
        ]
     ]
   where

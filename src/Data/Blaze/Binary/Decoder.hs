@@ -54,6 +54,7 @@ module Data.Blaze.Binary.Decoder (
 import Prelude hiding (catch)
 
 import Control.Applicative
+import Control.Monad (replicateM)
 
 import qualified Data.ByteString          as S
 import qualified Data.ByteString.Internal as S
@@ -151,6 +152,60 @@ instance Functor BoundedDecoder where
         (\failure success -> fast failure (\ip' -> success ip' . f))
         (\d8 -> f <$> slow d8)
 
+{-# INLINE bdWord16BE #-}
+bdWord16BE :: BoundedDecoder Word16
+bdWord16BE = BoundedDecoder 2 "Word16 (little-endian)"
+    (\_failure success ip -> do
+        let p8 = peekByteOff ip
+        w0 <- p8 0; w1 <- p8 1
+
+        let x = fromIntegral (w0 :: Word8) `shiftL` 8 .|. fromIntegral w1
+        success (ip `plusPtr` 4) x
+    )
+    (\d8 -> do w0 <- d8; w1 <- d8
+               return $! fromIntegral w0 `shiftL` 8 .|. fromIntegral w1
+    )
+
+{-# INLINE bdWord32BE #-}
+bdWord32BE :: BoundedDecoder Word32
+bdWord32BE = BoundedDecoder 4 "Word32 (little-endian)"
+    (\_failure success ip -> do
+        let p8 = peekByteOff ip
+        w0 <- p8 0; w1 <- p8 1; w2 <- p8 2; w3 <- p8 3;
+
+        let x = at 0 w0 .|.  at 1 w1 .|.  at 2 w2 .|.  at 3 w3
+        success (ip `plusPtr` 4) x
+    )
+    (\d8 -> do
+        w0 <- d8; w1 <- d8; w2 <- d8; w3 <- d8
+        return $! at 0 w0 .|.  at 1 w1 .|.  at 2 w2 .|.  at 3 w3
+    )
+  where
+    {-# INLINE at #-}
+    at n x = fromIntegral (x :: Word8) `shiftL` (n * 8)
+
+{-# INLINE bdWord64BE #-}
+bdWord64BE :: BoundedDecoder Word64
+bdWord64BE = BoundedDecoder 8 "Word64 (little-endian)"
+    (\_failure success ip -> do
+        let p8 = peekByteOff ip
+        w0 <- p8 0; w1 <- p8 1; w2 <- p8 2; w3 <- p8 3;
+        w4 <- p8 4; w5 <- p8 5; w6 <- p8 6; w7 <- p8 7;
+
+        let !x = at 0 w0 .|.  at 1 w1 .|.  at 2 w2 .|.  at 3 w3 .|.
+                 at 4 w4 .|.  at 5 w5 .|.  at 6 w6 .|.  at 7 w7
+        success (ip `plusPtr` 8) x
+    )
+    (\d8 -> do
+        w0 <- d8; w1 <- d8; w2 <- d8; w3 <- d8
+        w4 <- d8; w5 <- d8; w6 <- d8; w7 <- d8
+        return $! at 0 w0 .|.  at 1 w1 .|.  at 2 w2 .|.  at 3 w3 .|.
+                  at 4 w4 .|.  at 5 w5 .|.  at 6 w6 .|.  at 7 w7
+    )
+  where
+    {-# INLINE at #-}
+    at n x = fromIntegral (x :: Word8) `shiftL` (n * 8)
+
 {-# INLINE bdWord16LE #-}
 bdWord16LE :: BoundedDecoder Word16
 bdWord16LE = BoundedDecoder 2 "Word16 (little-endian)"
@@ -162,6 +217,21 @@ bdWord16LE = BoundedDecoder 2 "Word16 (little-endian)"
                w1 <- d8
                return $! fromIntegral w1 `shiftL` 8 .|. fromIntegral w0
     )
+
+{-# INLINE bdWord32LE #-}
+bdWord32LE :: BoundedDecoder Word32
+bdWord32LE = BoundedDecoder 4 "Word32 (little-endian)"
+    (\_failure success ip -> do
+        x <- peek (castPtr ip :: Ptr Word32)
+        success (ip `plusPtr` 4) x
+    )
+    (\d8 -> do
+        w0 <- d8; w1 <- d8; w2 <- d8; w3 <- d8
+        return $! at 3 w0 .|.  at 2 w1 .|.  at 1 w2 .|.  at 0 w3
+    )
+  where
+    {-# INLINE at #-}
+    at n x = fromIntegral x `shiftL` (n * 8)
 
 {-# INLINE bdWord64LE #-}
 bdWord64LE :: BoundedDecoder Word64
@@ -307,24 +377,27 @@ decodeEither left right =
               1 -> Right <$> right
               _ -> fail $ "decodeEither: unexpected tag " ++ show tag
 
+
+-- | Decode a list of values that were encoded with their size prefixed.
+decodeList :: Decoder a -> Decoder [a]
+decodeList decode = do n <- int
+                       replicateM n decode
+
 -- | Decode a list of values that were encoded in reverse order and with their
 -- size prefixed.
--- {-# NOINLINE decodeList #-}
-decodeList :: Decoder a -> Decoder [a]
-decodeList decode =
-    int >>= go []
-  where
-    go xs !n
-      | n <= 0    = return xs
-      | otherwise = do x <- decode; go (x:xs) (n - 1)
-
 -- decodeList :: Decoder a -> Decoder [a]
 -- decodeList decode =
---     int >>= go
+--     int >>= go []
 --   where
---     go !n
---       | n <= 0    = return []
---       | otherwise = force ((:) <$> decode <*> go (n - 1))
+--     go xs !n
+--       | n <= 0    = return xs
+--       | otherwise = do x <- decode; go (x:xs) (n - 1)
+
+ --
+ --    int >>= go
+ --  where
+ --    go n | n <= 0    = return []
+ --         | otherwise = (:) <$> decode <*> go (n-1)
 
 -- decodeList :: Decoder a -> Decoder [a]
 -- decodeList decode =
@@ -346,8 +419,6 @@ force :: Decoder a -> Decoder a
 force ds = Decoder $ \k -> unDecoder ds (\x -> x `seq` (k x))
 
 runDecoder :: Decoder a -> S.ByteString -> Either String a
--- FIXME: Make this proper.
-runDecoder _ bs | S.length bs < 4 = Left "too short input"
 runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
     withForeignPtr fpbuf $ \pbuf -> do
       let !ip0 = pbuf `plusPtr` (off + 4)
@@ -372,40 +443,43 @@ runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
                                   go (ip `plusPtr` 1) (k x)
                 | otherwise -> unexpectedEOI "Word8" ip
 
-              -- DInt k -> runBD (fromIntegral <$> bdWord64LE)
-              --                 (\ip' !(I# x#) -> go ip' (k x#))
-              --                 (\    !(I# x#) -> k x#         )
-              DInt k -> readN (sizeOf (undefined :: Int)) $ \ip' -> do
-                  (I# x) <- peek $ castPtr ip
-                  go ip' (k x)
+              DInt k -> runBD (fromIntegral <$> bdWord64BE)
+                      (\ip' !(I# x#) -> go ip' (k x#))
+                      (\    !(I# x#) -> k x#         )
+              -- DInt k -> readN (sizeOf (undefined :: Int)) $ \ip' -> do
+                  -- (I# x) <- peek $ castPtr ip
+                  -- go ip' (k x)
+
+              DWord k -> runBD (fromIntegral <$> bdWord64BE)
+                      (\ip' !(W# x#) -> go ip' (k x#))
+                      (\    !(W# x#) -> k x#         )
+
+              DWord16 k -> runBD bdWord16BE
+                      (\ip' !(W16# x#) -> go ip' (k x#))
+                      (\    !(W16# x#) -> k x#         )
+
+              DWord32 k -> runBD bdWord32BE
+                      (\ip' !(W32# x#) -> go ip' (k x#))
+                      (\    !(W32# x#) -> k x#         )
+
+              DWord64 k -> runBD bdWord64BE
+                      (\ip' !(W64# x#) -> go ip' (k x#))
+                      (\    !(W64# x#) -> k x#         )
+
+              DInt16 k -> runBD (fromIntegral <$> bdWord16BE)
+                      (\ip' !(I16# x#) -> go ip' (k x#))
+                      (\    !(I16# x#) -> k x#         )
+
+              DInt32 k -> runBD (fromIntegral <$> bdWord32BE)
+                      (\ip' !(I32# x#) -> go ip' (k x#))
+                      (\    !(I32# x#) -> k x#         )
+
+              DInt64 k -> runBD (fromIntegral <$> bdWord64BE)
+                      (\ip' !(I64# x#) -> go ip' (k x#))
+                      (\    !(I64# x#) -> k x#         )
+
 
 {-
-              DWord16 k -> readN 2 $ \ip' -> do (W16# x) <- peek $ castPtr ip
-                                                go ip' (k x)
-
-              DWord32 k -> readN 4 $ \ip' -> do (W32# x) <- peek $ castPtr ip
-                                                go ip' (k x)
-
-              DWord64 k -> readN 8 $ \ip' -> do (W64# x) <- peek $ castPtr ip
-                                                go ip' (k x)
-
-              DWord k -> readN (sizeOf (undefined :: Word)) $ \ip' -> do
-                  (W# x) <- peek $ castPtr ip
-                  go ip' (k x)
-
-              DInt8  k -> readN 1 $ \ip' -> do (I8# x) <- peek $ castPtr ip
-                                               go ip' (k x)
-              DInt16 k -> readN 2 $ \ip' -> do (I16# x) <- peek $ castPtr ip
-                                               go ip' (k x)
-              DInt32 k -> readN 4 $ \ip' -> do (I32# x) <- peek $ castPtr ip
-                                               go ip' (k x)
-              DInt64 k -> readN 8 $ \ip' -> do (I64# x) <- peek $ castPtr ip
-                                               go ip' (k x)
-
-              DInt k -> readN (sizeOf (undefined :: Int)) $ \ip' -> do
-                  (I# x) <- peek $ castPtr ip
-                  go ip' (k x)
-
               DFloat k -> readN (sizeOf (undefined :: Float)) $ \ip' -> do
                   (F# x) <- peek $ castPtr ip
                   go ip' (k x)
@@ -414,35 +488,12 @@ runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
                   (D# x) <- peek $ castPtr ip
                   go ip' (k x)
 
-              DChar k
-                | ip `plusPtr` 4 <= ipe -> do
-                    let peek8 = peekByteOff ip
-                    w0 <- peek ip
-                    case () of
-                      _ | w0 < 0x80 -> do
-                            let !c# = chr1# w0
-                            go (ip `plusPtr` 1) (k c#)
-
-                        | w0 < 0xe0 -> do
-                            w1 <- peek8 1
-                            let !c# = chr2# w0 w1
-                            go (ip `plusPtr` 2) (k c#)
-
-                        | w0 < 0xf0 -> do
-                            w1 <- peek8 1; w2 <- peek8 2
-                            let !c# = chr3# w0 w1 w2
-                            go (ip `plusPtr` 3) (k c#)
-
-                        | otherwise -> do
-                            w1 <- peek8 1; w2 <- peek8 2; w3 <- peek8 3
-                            let !c# = chr4# w0 w1 w2 w3
-                            go (ip `plusPtr` 4) (k c#)
-
-                | otherwise ->
-                    go ip (unDecoder (slowCharUtf8 ip) (\ !(C# c#) -> k c#))
 -}
-              DChar k -> runBD bdCharUtf8 (\ip' !(C# c#) -> go ip' (k c#))
-                                          (\    !(C# c#) -> k c#         )
+              DChar k ->
+                runBD bdCharUtf8
+                      (\ip' !(C# c#) -> go ip' (k c#))
+                      (\    !(C# c#) -> k c#         )
+
               DSlowWord8 ipErr locErr k
                 | ip < ipe  -> do x <- peek ip
                                   go (ip `plusPtr` 1) (k x)
@@ -457,15 +508,6 @@ runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
                 | ip `plusPtr` n <= ipe = fast (`err` ip) io ip
                 | otherwise = go ip (unDecoder (slow (slowWord8 ip name)) k)
 
-              {-# INLINE readN #-}
-              readN :: Int
-                    -> (Ptr Word8 -> IO (Either String a))
-                    -> IO (Either String a)
-              readN n io =
-                  let ip' = ip `plusPtr` n in
-                  if ip' <= ipe
-                    then io ip'
-                    else unexpectedEOI ("reading " ++ show n ++ " bytes") ip
 
       -- start the decoding
       go ip0 (unDecoder ds0 DReturn)

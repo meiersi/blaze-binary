@@ -364,11 +364,11 @@ builder = Stream . EBuilder
 -- encoding.
 -- {-# INLINE encodeList #-}
 encodeList :: Encoder a -> Encoder [a]
-encodeList f =
-    go (0 :: Int) mempty
-  where
-    go !len acc []     = int len <> acc
-    go !len acc (x:xs) = go (len + 1) (f x <> acc) xs
+-- encodeList f =
+--     go (0 :: Int) mempty
+--   where
+--     go !len acc []     = int len <> acc
+--     go !len acc (x:xs) = go (len + 1) (f x <> acc) xs
 
 -- Alternatives:
 --
@@ -377,9 +377,9 @@ encodeList f =
 -- ^ Tagged encoding: works in a streaming fashion but requires more space and
 -- is more expensive to decode.
 
--- encodeList = \f xs -> int (length xs) <> foldMap f xs
+encodeList = \f xs -> int (length xs) <> foldMap f xs
 --
 -- ^ Length-prefixing and standard-order encoding of the list elements. This
 -- is slightly more expensive to decode as then the reversal has to be made
--- during decoding. It might nevertheless be preferred, as the primitive
--- streams of values become more readable.
+-- during decoding. We nevertheless prefer it, as the primitive streams of
+-- values become more readable.
