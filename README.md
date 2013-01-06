@@ -36,7 +36,7 @@ representation of the primitive stream to ensure *O(1)*-concatentation.  In
 the second step, the stream of primitive values is converted to a sequence of
 bytes using the new bytestring builder and its support for bounded encodings. 
 
-This splitting of the encoding into a "flattening pass" and an "primtive
+This splitting of the encoding into a "flattening pass" and an "primitive
 encoding pass" results in the nice benefit that the encoding of the stream of
 primitive values can be chosen at runtime. Morover, it is more efficient, as
 the benchmarks demonstrate. In the beginning, I implemented a version that
