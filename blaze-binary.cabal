@@ -38,7 +38,7 @@ library
 
         exposed-modules:        Data.Blaze.Binary
 
-        ghc-options:            -Wall
+        ghc-options:            -Wall -O2
         ghc-prof-options:       -prof -auto-all
 
         if impl(ghc >= 7.2.1)
@@ -48,7 +48,7 @@ benchmark bench
   type:              exitcode-stdio-1.0
   main-is:           Benchmarks.hs
   hs-source-dirs:    bench, src
-  ghc-options:       -Wall
+  ghc-options:       -Wall -O2
   build-depends:     base               >= 4      && < 5
                    , ghc-prim           >= 0.2    && < 0.3
                    , containers         >= 0.4    && < 0.5
@@ -69,7 +69,7 @@ benchmark bench-generic
   type:              exitcode-stdio-1.0
   main-is:           GenericBenchmarks.hs
   hs-source-dirs:    bench, src
-  ghc-options:       -Wall
+  ghc-options:       -Wall -O2
   build-depends:     base               >= 4      && < 5
                    , ghc-prim           >= 0.2    && < 0.3
                    , containers         >= 0.4    && < 0.5
