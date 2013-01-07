@@ -44,6 +44,7 @@ module Data.Blaze.Binary.Encoder (
     , char
 
     , byteString
+    , lazyByteString
 
     -- ** Combinators
     , encodeList
@@ -60,7 +61,7 @@ import Prelude hiding (putChar)
 
 import qualified Data.ByteString                                     as S
 -- import qualified Data.ByteString.Char8                               as SC8
--- import qualified Data.ByteString.Lazy                                as L
+import qualified Data.ByteString.Lazy                                as L
 import qualified Data.ByteString.Lazy.Builder                        as B
 -- import qualified Data.ByteString.Lazy.Builder.ASCII                  as B
 -- import qualified Data.ByteString.Lazy.Builder.Extras                 as B
@@ -69,6 +70,8 @@ import qualified Data.ByteString.Lazy.Builder.BasicEncoding          as E
 import qualified Data.ByteString.Lazy.Builder.BasicEncoding.Internal as E
 import           Data.Monoid
 import           Data.Foldable (foldMap)
+import           Data.List (unfoldr)
+import           Data.Bits
 import           Data.Word
 import           Data.Int
 import           Foreign.Ptr
@@ -99,6 +102,7 @@ data StreamRep =
      | EDouble         {-# UNPACK #-} !Double       StreamRep
      | EInteger                       !Integer      StreamRep
      | EByteString                    !S.ByteString StreamRep
+     | ELByteString                    L.ByteString StreamRep
      -- Easily supportable, but not used currently. This provides a neat
      -- escape hatch for implementing your own encoder.
      -- | EBuilder                       !B.Builder    StreamRep
@@ -121,22 +125,22 @@ instance Monoid Stream where
 
 -- | Binary encode a 'Stream' to a lazy bytestring 'B.Builder'.
 {-# INLINE renderWith #-}
-renderWith :: Word8 -- ^ Format identifier.
-           -> E.BoundedEncoding Word8 -> E.BoundedEncoding Word16 -> E.BoundedEncoding Word32 -> E.BoundedEncoding Word64 -> E.BoundedEncoding Word
+renderWith :: E.BoundedEncoding Word8 -> E.BoundedEncoding Word16 -> E.BoundedEncoding Word32 -> E.BoundedEncoding Word64 -> E.BoundedEncoding Word
            -> E.BoundedEncoding Int8  -> E.BoundedEncoding Int16  -> E.BoundedEncoding Int32  -> E.BoundedEncoding Int64  -> E.BoundedEncoding Int
            -> E.BoundedEncoding Char
-           -> E.BoundedEncoding Float -> E.BoundedEncoding Double
-           -> (Integer -> B.Builder)
+           -- -> E.BoundedEncoding Float -> E.BoundedEncoding Double
+           -> Encoder Float
+           -> Encoder Double
+           -> Encoder Integer
            -> (S.ByteString -> B.Builder)
+           -> (L.ByteString -> B.Builder)
            -> (B.Builder -> B.Builder)
            -> Stream
            -> B.Builder
-renderWith formatId w8 w16 w32 w64 w i8 i16 i32 i64 i c f d ibig bs _b =
-    -- take care that inlining is possible once all encodings are fixed
-    \vs0 -> prefix <> B.builder (step (toStreamRep vs0 EEmpty))
+renderWith w8 w16 w32 w64 w i8 i16 i32 i64 i c f d ibig bs lbs _b =
+    -- ensure inlining is possible once all encodings are fixed
+    \vs0 -> B.builder (step (toStreamRep vs0 EEmpty))
   where
-    prefix = B.word8 0xce <> B.word8 0xbb <> B.word8 0x2e <> B.word8 formatId
-
     step vs1 k (B.BufferRange op0 ope0) =
         go vs1 op0
       where
@@ -154,34 +158,57 @@ renderWith formatId w8 w16 w32 w64 w i8 i16 i32 i64 i c f d ibig bs _b =
               EInt64  x vs'     -> E.runB i64 x op >>= go vs'
               EInt    x vs'     -> E.runB i   x op >>= go vs'
               EChar   x vs'     -> E.runB c   x op >>= go vs'
-              EFloat  x vs'     -> E.runB f   x op >>= go vs'
-              EDouble x vs'     -> E.runB d   x op >>= go vs'
-              EInteger x vs'    -> B.runBuilderWith (ibig x) (step vs' k) (B.BufferRange op ope0)
-              EByteString x vs' -> B.runBuilderWith (bs x)   (step vs' k) (B.BufferRange op ope0)
+              EFloat  x vs'     -> go (toStreamRep (f x) vs') op
+              EDouble x vs'     -> go (toStreamRep (d x) vs') op
+              EInteger x vs'    -> go (toStreamRep (ibig x) vs') op
+              -- EFloat  x vs'     -> E.runB f   x op >>= go vs'
+              -- EDouble x vs'     -> E.runB d   x op >>= go vs'
+              -- EInteger x vs'    -> B.runBuilderWith (ibig x) (step vs' k) (B.BufferRange op ope0)
+              EByteString x vs'  -> B.runBuilderWith (bs x)  (step vs' k) (B.BufferRange op ope0)
+              ELByteString x vs' -> B.runBuilderWith (lbs x) (step vs' k) (B.BufferRange op ope0)
               -- EBuilder x vs'    -> B.runBuilderWith (b x)    (step vs' k) (B.BufferRange op ope0)
           | otherwise = return $ B.bufferFull bound op (step vs k)
 
     bound = max' w8 $ max' w16 $ max' w32 $ max' w64 $ max' w $
             max' i8 $ max' i16 $ max' i32 $ max' i64 $ max' i $
-            max' c  $ max' f $ E.sizeBound d
+            E.sizeBound c
+            -- max' c  $ max' f $ E.sizeBound d
 
     {-# INLINE max' #-}
     max' e = max (E.sizeBound e)
 
--- | Encode a 'Stream' to a lazy bytestring 'B.Builder' using a format
--- optimized for maximal throughput on 64-bit, x86 machines.
+-- -- | Encode a 'Stream' to a lazy bytestring 'B.Builder' using a format
+-- -- optimized for maximal throughput on 64-bit, x86 machines.
+-- render :: Stream -> B.Builder
+-- render = renderWith
+--     (fe E.word8) (fe E.word16LE) (fe E.word32LE) (fe E.word64LE) (fe (fromIntegral E.>$< E.word64LE))
+--     (fe E.int8)  (fe E.int16LE)  (fe E.int32LE)  (fe E.int64LE)  (fe (fromIntegral E.>$< E.int64LE))
+--     E.charUtf8 (fe E.floatLE) (fe E.doubleLE)
+--     encodeIntegerBytes
+--     (\x -> B.int64LE (fromIntegral $ S.length x) <> B.byteString x)
+--     id
+--   where
+--     {-# INLINE fe #-}
+--     fe = E.fromF
+
+-- | Encode a 'Stream' to a lazy bytestring 'B.Builder' using the format of
+-- the 'binary' library.
 render :: Stream -> B.Builder
 render = renderWith
-    0x00 -- throughput, untagged
-    (fe E.word8) (fe E.word16LE) (fe E.word32LE) (fe E.word64LE) (fe (fromIntegral E.>$< E.word64LE))
-    (fe E.int8)  (fe E.int16LE)  (fe E.int32LE)  (fe E.int64LE)  (fe (fromIntegral E.>$< E.int64LE))
-    E.charUtf8 (fe E.floatLE) (fe E.doubleLE)
-    (error "render: integer: implement")
-    (\x -> B.int64LE (fromIntegral $ S.length x) <> B.byteString x)
+    (fe E.word8) (fe E.word16BE) (fe E.word32BE) (fe E.word64BE) (fe (fromIntegral E.>$< E.word64BE))
+    (fe E.int8)  (fe E.int16BE)  (fe E.int32BE)  (fe E.int64BE)  (fe (fromIntegral E.>$< E.int64BE))
+    E.charUtf8
+    encodeFloating encodeFloating
+    encodeIntegerBytes
+    (\x -> B.int64BE (fromIntegral $ S.length x) <> B.byteString x)
+    (\x -> B.int64BE (               L.length x) <> B.lazyByteString x)
     id
   where
     {-# INLINE fe #-}
     fe = E.fromF
+
+    encodeFloating :: RealFloat a => Encoder a
+    encodeFloating f = case decodeFloat f of (x,y) -> integer x <> int y
 
 {- To be reactivated
 
@@ -347,6 +374,11 @@ char = Stream . EChar
 byteString :: Encoder S.ByteString
 byteString = Stream . EByteString
 
+-- | Encode a lazy 'L.ByteString' value.
+{-# INLINE lazyByteString #-}
+lazyByteString :: Encoder L.ByteString
+lazyByteString = Stream . ELByteString
+
 {-
 {-# INLINE builder #-}
 builder :: Encoder B.Builder
@@ -383,3 +415,25 @@ encodeList = \f xs -> int (length xs) <> foldMap f xs
 -- is slightly more expensive to decode as then the reversal has to be made
 -- during decoding. We nevertheless prefer it, as the primitive streams of
 -- values become more readable.
+
+
+
+
+encodeIntegerBytes :: Encoder Integer
+encodeIntegerBytes n | n >= lo && n <= hi =  -- fast path
+    word8 0 <> int32 (fromIntegral n)
+  where
+    lo = fromIntegral (minBound :: Int32) :: Integer
+    hi = fromIntegral (maxBound :: Int32) :: Integer
+
+encodeIntegerBytes n =                          -- slow path
+    word8 1 <> word8 sign <> encodeList word8 (unroll (abs n))
+  where
+    sign = fromIntegral (signum n)
+
+    unroll :: Integer -> [Word8]
+    unroll = unfoldr step
+      where
+        step 0 = Nothing
+        step i = Just (fromIntegral i, i `shiftR` 8)
+

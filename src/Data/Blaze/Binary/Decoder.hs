@@ -418,6 +418,22 @@ decodeList decode = do n <- int
 force :: Decoder a -> Decoder a
 force ds = Decoder $ \k -> unDecoder ds (\x -> x `seq` (k x))
 
+integerFromBytes :: Decoder Integer
+integerFromBytes = do
+    tag <- word8
+    case tag of
+        0 -> fromIntegral <$> int32
+        _ -> do sign  <- word8
+                bytes <- decodeList word8
+                let v = roll bytes
+                return $! if sign == (1 :: Word8) then v else - v
+  where
+    roll :: [Word8] -> Integer
+    roll = foldr unstep 0
+      where
+        unstep b a = a `shiftL` 8 .|. fromIntegral b
+
+
 runDecoder :: Decoder a -> S.ByteString -> Either String a
 runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
     withForeignPtr fpbuf $ \pbuf -> do
@@ -478,21 +494,26 @@ runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
                       (\ip' !(I64# x#) -> go ip' (k x#))
                       (\    !(I64# x#) -> k x#         )
 
+              DFloat k -> go ip $ (`unDecoder` (\ !(F# x) -> k x)) $
+                encodeFloat <$> integer <*> int
 
-{-
-              DFloat k -> readN (sizeOf (undefined :: Float)) $ \ip' -> do
-                  (F# x) <- peek $ castPtr ip
-                  go ip' (k x)
+              DDouble k -> go ip $ (`unDecoder` (\ !(D# x) -> k x)) $
+                encodeFloat <$> integer <*> int
 
-              DDouble k -> readN (sizeOf (undefined :: Double)) $ \ip' -> do
-                  (D# x) <- peek $ castPtr ip
-                  go ip' (k x)
+              DInteger k -> go ip $ unDecoder integerFromBytes k
 
--}
               DChar k ->
                 runBD bdCharUtf8
                       (\ip' !(C# c#) -> go ip' (k c#))
                       (\    !(C# c#) -> k c#         )
+
+              -- DByteString k -> runBD (fromIntegral <$> bdWord64BE)
+              --         (\ip' !(I# n#) -> go ip' (k x#))
+              --         (\    !(I# n#) -> k x#         )
+
+              -- DRawByteString n k
+              --   | ip `plusPtr` n < ipe ->
+              --   | otherwise -> unexpectedEOI ip $ "bytestring of length " ++ show n
 
               DSlowWord8 ipErr locErr k
                 | ip < ipe  -> do x <- peek ip
