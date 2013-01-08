@@ -51,6 +51,7 @@ module Data.Blaze.Binary.Decoder (
 
   ) where
 
+import Debug.Trace (trace)
 import Prelude hiding (catch)
 
 import Control.Applicative
@@ -381,7 +382,7 @@ decodeEither left right =
 -- | Decode a list of values that were encoded with their size prefixed.
 decodeList :: Decoder a -> Decoder [a]
 decodeList decode = do n <- int
-                       replicateM n decode
+                       trace ("list of length: " ++ show n) $ replicateM n decode
 
 -- | Decode a list of values that were encoded in reverse order and with their
 -- size prefixed.
@@ -433,31 +434,58 @@ integerFromBytes = do
       where
         unstep b a = a `shiftL` 8 .|. fromIntegral b
 
+data Result a =
+        Done S.ByteString a
+      | Fail S.ByteString String
+      | Partial (S.ByteString -> Result a)
+
 
 runDecoder :: Decoder a -> S.ByteString -> Either String a
-runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
-    withForeignPtr fpbuf $ \pbuf -> do
-      let !ip0 = pbuf `plusPtr` (off + 4)
-          !ipe = ip0 `plusPtr` (len - 4)
+runDecoder ds bs = case decode (unDecoder ds DReturn) bs of
+    Done _ x   -> Right x
+    Fail _ msg -> Left msg
+    Partial _  -> Left "unexpected end of input"
 
-          err :: String -> Ptr Word8 -> IO (Either String a)
-          err msg ip = return $ Left $ msg ++
-              " (at byte " ++ show (ip `minusPtr` ip0) ++
-              " of " ++ show len ++ ")"
+{-
+decodeLazy :: Decoder -> L.ByteString -> Either String a
+decodeLazy ds =
+    go (decode (unDecoder ds DReturn))
+  where
+    foldrChunks
+    go d (L.Chunk bs lbs)
+    go d (L.Chunk bs lbs)
+-}
+
+decode :: DStream a -> S.ByteString -> Result a
+decode ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
+    withForeignPtr fpbuf $ \pbuf -> do
+      let !ip0 = pbuf `plusPtr` off
+          !ipe = ip0 `plusPtr` len
+
+          rest ip = S.PS fpbuf (ip `minusPtr` ip0) (ipe `minusPtr` ip)
+
+          err :: String -> Ptr Word8 -> IO (Result a)
+          err msg ip = do
+              let !bs = rest ip
+              return $ Fail (rest ip) msg
+              -- " (at byte " ++ show (ip `minusPtr` ip0) ++
+              -- " of " ++ show len ++ ")"
 
           unexpectedEOI loc =
               err ("unexpected end-of-input while decoding " ++  loc)
 
-          go :: Ptr Word8 -> DStream a -> IO (Either String a)
+          go :: Ptr Word8 -> DStream a -> IO (Result a)
           go !ip ds = case ds of
-              DReturn x -> return $ Right x
+              DReturn x -> do
+                let !bs = rest ip
+                return $ Done bs x
 
               DFail msg -> err msg ip
 
               DWord8  k
                 | ip < ipe  -> do (W8# x) <- peek $ castPtr ip
                                   go (ip `plusPtr` 1) (k x)
-                | otherwise -> unexpectedEOI "Word8" ip
+                | otherwise -> return $ Partial $ decode ds
 
               DInt k -> runBD (fromIntegral <$> bdWord64BE)
                       (\ip' !(I# x#) -> go ip' (k x#))
@@ -522,16 +550,16 @@ runDecoder ds0 (S.PS fpbuf off len) = S.inlinePerformIO $ do
             where
               {-# INLINE runBD #-}
               runBD :: BoundedDecoder b
-                    -> (Ptr Word8 -> b -> IO (Either String a))
+                    -> (Ptr Word8 -> b -> IO (Result a))
                     -> (b -> DStream a)
-                    -> IO (Either String a)
+                    -> IO (Result a)
               runBD (BoundedDecoder n name fast slow) io k
                 | ip `plusPtr` n <= ipe = fast (`err` ip) io ip
                 | otherwise = go ip (unDecoder (slow (slowWord8 ip name)) k)
 
 
       -- start the decoding
-      go ip0 (unDecoder ds0 DReturn)
+      go ip0 ds0
 
 {-
 {-# INLINE fastCharUtf8 #-}

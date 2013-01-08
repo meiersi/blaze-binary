@@ -16,6 +16,7 @@
 module Main (main) where
 
 import           Prelude hiding (words)
+import           Numeric
 import           Data.Monoid ((<>))
 import           Criterion.Main
 import           Control.DeepSeq
@@ -58,7 +59,7 @@ import GHC.Generics
 
 -- | The number of repetitions to consider.
 nRepl :: Int
-nRepl = 1000
+nRepl = 1
 
 -- We use NOINLINE to ensure that GHC has no chance of optimizing too much.
 
@@ -104,7 +105,26 @@ charData n = take n ['\0'..]
 -- benchmarks
 -------------
 main :: IO ()
-main = Criterion.Main.defaultMain $
+main = do
+  let hexWord8Padded w = (if w < 16 then ('0':) else id) (showHex w "")
+      hex = concatMap hexWord8Padded . S.unpack
+      testBlazeBinary name xs = putStrLn $
+        name ++ ": " ++
+        if Right xs == xs'
+          then "OK"
+          else unlines [ "FAIL"
+                       , "xs:  " ++ show xs
+                       , "bs:  " ++ hex bs
+                       , "xs': " ++ show xs'
+                       ]
+        where
+          bs  = Blaze.toByteString xs
+          xs' = BlazeD.runDecoder Blaze.decode bs
+
+  testBlazeBinary "[Word8]"   (word8Data nRepl)
+  testBlazeBinary "[[Word8]]" (word8sData nRepl)
+
+  Criterion.Main.defaultMain $
     [ bgroup ("decode (" ++ show nRepl ++ ")")
        -- [ bench "param-blaze-binary: word8s" $ nf
        --     (benchParamDecoder ParamBlaze.word8s . S.copy)
@@ -122,7 +142,7 @@ main = Criterion.Main.defaultMain $
            (Binary.decode :: L.ByteString -> [Word8])
            (Binary.encode $ word8Data nRepl)
        , bench "iter-blaze-binary: [[Word8]]" $ nf
-           (benchBlazeDecoder BlazeD.listOfWord8s)
+           (benchBlazeDecoder (Blaze.decode :: BlazeD.Decoder [[Word8]]))
            -- (Blaze.fromByteString :: S.ByteString -> Either String [[Word8]])
            (Blaze.toByteString $ word8sData nRepl)
        , bench "binary-cps: [[Word8]]" $ nf
