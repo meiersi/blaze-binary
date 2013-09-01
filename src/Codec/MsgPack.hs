@@ -30,10 +30,10 @@ module Codec.MsgPack (
 
     ) where
 
-import Control.Applicative
+-- import Control.Applicative
 
-import Data.Blaze.Binary.Encoding
-import qualified Data.Blaze.Binary.Decoding as D
+import qualified Codec.MsgPack.Encoder as E
+-- import qualified Data.Blaze.Binary.Decoding as D
 
 import Data.Word
 import Data.Monoid
@@ -41,10 +41,10 @@ import Data.Foldable (foldMap)
 import Foreign
 
 -- And needed for the instances:
-import           Data.Array.Unboxed
+-- import           Data.Array.Unboxed
 import qualified Data.ByteString               as S
 import qualified Data.ByteString.Lazy          as L
-import qualified Data.ByteString.Lazy.Internal as L (foldrChunks, ByteString(..))
+-- import qualified Data.ByteString.Lazy.Internal as L (foldrChunks, ByteString(..))
 import qualified Data.ByteString.Lazy.Builder  as B
 import qualified Data.Map                      as Map
 import qualified Data.Set                      as Set
@@ -59,6 +59,23 @@ import GHC.Generics
 #endif
 
 ------------------------------------------------------------------------
+-- Utility functions
+------------------------------------------------------------------------
+
+{-
+tagged0 :: Int -> OutStream
+tagged0 tag = E.int tag
+
+tagged1 :: Binary a => Int -> a -> OutStream
+tagged1 tag x = E.arrayLen 2 <> E.int tag <> encode x
+
+tagged2 :: (Binary a, Binary b) => Int -> a -> b -> OutStream
+tagged2 tag x y = E.arrayLen 3 <> E.int tag <> encode x <> encode y
+-}
+
+
+
+------------------------------------------------------------------------
 
 -- | If your compiler has support for the @DeriveGeneric@ and
 -- @DefaultSignatures@ language extensions (@ghc >= 7.2.1@), the 'encode' and 'decode'
@@ -69,63 +86,52 @@ import GHC.Generics
 -- 'encode' and 'decode'.
 class Binary t where
     -- | Encode a value in the Put monad.
-    encode :: Encoding t
-    decode :: D.Decoder t
-
-#ifdef GENERICS
-    default encode :: (Generic t, GBinary (Rep t)) => Encoding t
-    encode = gEncode . from
-    {-# INLINE encode #-}
-
-    default decode :: (Generic t, GBinary (Rep t)) => D.Decoder t
-    decode = to <$> gDecode
-    {-# INLINE decode #-}
-#endif
+    encode :: E.Encoder t
+    -- decode :: D.Decoder t
 
 -- | Encode a value to a strict 'S.ByteString'.
 toByteString :: Binary t => t -> S.ByteString
--- FIXME: Use more efficient conversion.
-toByteString = S.concat . L.toChunks . toLazyByteString
+toByteString = L.toStrict . toLazyByteString
 
 
 -- | Encode a value to a lazy 'L.ByteString'.
 toLazyByteString :: Binary t => t -> L.ByteString
-toLazyByteString = B.toLazyByteString . render . encode
+toLazyByteString = B.toLazyByteString . E.toBuilder . encode
 
 ------------------------------------------------------------------------
 -- Simple instances
 
-wrongTag :: Show a => String -> a -> D.Decoder b
-wrongTag loc tag = fail $ "decode " ++ loc ++ ": could not parse tag " ++ show tag
+-- wrongTag :: Show a => String -> a -> D.Decoder b
+-- wrongTag loc tag = fail $ "decode " ++ loc ++ ": could not parse tag " ++ show tag
 
 -- The () type need never be written to disk: values of singleton type
 -- can be reconstructed from the type alone
 instance Binary () where
     {-# INLINE encode #-}
-    encode () = mempty
-    {-# INLINE decode #-}
-    decode = return ()
+    encode () = E.nil
+    -- {-# INLINE decode #-}
+    -- decode = return ()
 
 -- Bools are encoded as a byte in the range 0 .. 1
 instance Binary Bool where
     {-# INLINE encode #-}
-    encode = \x -> word8 (if x then 1 else 0)
-    decode = do tag <- D.word8
-                case tag of
-                  0 -> return False
-                  1 -> return True
-                  _ -> wrongTag "Bool" tag
+    encode = E.bool
+    -- decode = do tag <- D.word8
+    --             case tag of
+    --               0 -> return False
+    --               1 -> return True
+    --               _ -> wrongTag "Bool" tag
 
 -- Values of type 'Ordering' are encoded as a byte in the range 0 .. 2
 instance Binary Ordering where
     {-# INLINE encode #-}
-    encode = \x -> word8 (case x of LT -> 0; EQ -> 1; GT -> 2)
-    decode = do tag <- D.word8
-                case tag of
-                  0 -> return LT
-                  1 -> return EQ
-                  2 -> return GT
-                  _ -> wrongTag "Ordering" tag
+    encode = \x -> E.word8 (case x of LT -> 0; EQ -> 1; GT -> 2)
+    -- decode = do tag <- D.word8
+    --             case tag of
+    --               0 -> return LT
+    --               1 -> return EQ
+    --               2 -> return GT
+    --               _ -> wrongTag "Ordering" tag
 
 ------------------------------------------------------------------------
 -- Words and Ints
@@ -133,117 +139,120 @@ instance Binary Ordering where
 -- Words8s are written as bytes
 instance Binary Word8 where
     {-# INLINE encode #-}
-    encode = word8
-    {-# INLINE decode #-}
-    decode = D.word8
+    encode = E.word8
+    -- {-# INLINE decode #-}
+    -- decode = D.word8
 
 -- Words16s are written as 2 bytes in big-endian (network) order
 instance Binary Word16 where
     {-# INLINE encode #-}
-    encode  = word16
-    {-# INLINE decode #-}
-    decode = D.word16
+    encode  = E.word16
+    -- {-# INLINE decode #-}
+    -- decode = D.word16
 
 -- Words32s are written as 4 bytes in big-endian (network) order
 instance Binary Word32 where
     {-# INLINE encode #-}
-    encode     = word32
-    {-# INLINE decode #-}
-    decode = D.word32
+    encode     = E.word32
+    -- {-# INLINE decode #-}
+    -- decode = D.word32
 
 -- Words64s are written as 8 bytes in big-endian (network) order
 instance Binary Word64 where
     {-# INLINE encode #-}
-    encode     = word64
-    {-# INLINE decode #-}
-    decode = D.word64
+    encode     = E.word64
+    -- {-# INLINE decode #-}
+    -- decode = D.word64
 
 -- Int8s are written as a single byte.
 instance Binary Int8 where
     {-# INLINE encode #-}
-    encode     = int8
-    {-# INLINE decode #-}
-    decode = D.int8
+    encode     = E.int8
+    -- {-# INLINE decode #-}
+    -- decode = D.int8
 
 -- Int16s are written as a 2 bytes in big endian format
 instance Binary Int16 where
     {-# INLINE encode #-}
-    encode     = int16
-    {-# INLINE decode #-}
-    decode = D.int16
+    encode     = E.int16
+    -- {-# INLINE decode #-}
+    -- decode = D.int16
 
 -- Int32s are written as a 4 bytes in big endian format
 instance Binary Int32 where
     {-# INLINE encode #-}
-    encode     = int32
-    {-# INLINE decode #-}
-    decode = D.int32
+    encode     = E.int32
+    -- {-# INLINE decode #-}
+    -- decode = D.int32
 
 -- Int64s are written as a 8 bytes in big endian format
 instance Binary Int64 where
     {-# INLINE encode #-}
-    encode     = int64
-    {-# INLINE decode #-}
-    decode = D.int64
+    encode     = E.int64
+    -- {-# INLINE decode #-}
+    -- decode = D.int64
 
 ------------------------------------------------------------------------
 
 -- Words are are written as Word64s, that is, 8 bytes in big endian format
 instance Binary Word where
     {-# INLINE encode #-}
-    encode   = word
-    {-# INLINE decode #-}
-    decode = D.word
+    encode   = E.word
+    -- {-# INLINE decode #-}
+    -- decode = D.word
 
 -- Ints are are written as Int64s, that is, 8 bytes in big endian format
 instance Binary Int where
     {-# INLINE encode #-}
-    encode  = int
-    {-# INLINE decode #-}
-    decode = D.int
+    encode  = E.int
+    -- {-# INLINE decode #-}
+    -- decode = D.int
 
+{-
 instance Binary Integer where
     {-# INLINE encode #-}
     encode = integer
     decode = error "TODO: decode Integer!"
+-}
 
 instance (Binary a, Integral a) => Binary (R.Ratio a) where
     {-# INLINE encode #-}
     encode = \r -> encode (R.numerator r, R.denominator r)
-    decode = error "TODO: decode Ratio!"
+    -- decode = error "TODO: decode Ratio!"
 
 instance Binary Char where
     {-# INLINE encode #-}
-    encode = char
-    {-# INLINE decode #-}
-    decode = D.char
+    encode = E.char
+    -- {-# INLINE decode #-}
+    -- decode = D.char
 
 instance (Binary a, Binary b) => Binary (a,b) where
     {-# INLINE encode #-}
-    encode (a,b) = encode a <> encode b
-    {-# INLINE decode #-}
-    decode = (,) <$> decode <*> decode
+    encode (a,b) = E.arrayLen 2 <> encode a <> encode b
+    -- {-# INLINE decode #-}
+    -- decode = (,) <$> decode <*> decode
 
 instance (Binary a, Binary b, Binary c) => Binary (a,b,c) where
     {-# INLINE encode #-}
-    encode (a,b,c) = encode a <> encode b <> encode c
-    {-# INLINE decode #-}
-    decode = (,,) <$> decode <*> decode <*> decode
+    encode (a,b,c) = E.arrayLen 3 <> encode a <> encode b <> encode c
+    -- {-# INLINE decode #-}
+    -- decode = (,,) <$> decode <*> decode <*> decode
 
 instance (Binary a, Binary b, Binary c, Binary d)
         => Binary (a,b,c,d) where
-    encode (a,b,c,d) = encode a <> encode b <> encode c <> encode d
-    decode = (,,,) <$> decode <*> decode <*> decode <*> decode
+    encode (a,b,c,d) = E.arrayLen 4 <> encode a <> encode b <> encode c <> encode d
+    -- decode = (,,,) <$> decode <*> decode <*> decode <*> decode
 
 instance (Binary a, Binary b, Binary c, Binary d, Binary e)
         => Binary (a,b,c,d,e) where
-    encode (a,b,c,d,e) = encode a <> encode b <> encode c <> encode d <> encode e
-    decode = (,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode
+    encode (a,b,c,d,e) = E.arrayLen 5 <> encode a <> encode b <> encode c <> encode d <> encode e
+    -- decode = (,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode
 
 --
 -- and now just recurse:
 --
 
+{-
 instance (Binary a, Binary b, Binary c, Binary d, Binary e
          , Binary f)
         => Binary (a,b,c,d,e,f) where
@@ -274,103 +283,104 @@ instance (Binary a, Binary b, Binary c, Binary d, Binary e,
         => Binary (a,b,c,d,e,f,g,h,i,j) where
     encode (a,b,c,d,e,f,g,h,i,j) = encode a <> encode b <> encode c <> encode d <> encode e <> encode f <> encode g <> encode h <> encode i <> encode j
     decode = (,,,,,,,,,) <$> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode <*> decode
+-}
 
 ------------------------------------------------------------------------
 -- Container types
 
 -- | Share list encoding, as it is required for faster tree encoding.
 {-# INLINE encodeList #-}
-encodeList :: Encoding a -> Encoding [a]
--- encodeList f = (<> word8 0) . foldMap ((word8 1 <>) . f)
--- encodeList = \f xs -> encode (length xs) <> foldMap f xs
-encodeList f =
-    go (0 :: Int) mempty
-  where
-    go !len acc []     = encode len <> acc
-    go !len acc (x:xs) = go (len + 1) (f x <> acc) xs
--- \f xs -> encode (length xs) <> foldMap f xs
+encodeList :: E.Encoder a -> E.Encoder [a]
+-- encodeList = \f -> foldr (\x os -> E.arrayLen 2 <> f x <> os) (E.arrayLen 0)
+encodeList = \f xs -> E.arrayLen (fromIntegral $ length xs) <> foldMap f xs
 
--- Encoding the list in reverse order might be interesting to simplify its
--- parsing. It just depends on which side is easier to get up to speed :-)
--- encodeList f = (<> word8 0) . foldl (\lhs x -> word8 1 <> f x <> lhs) mempty
 
 instance Binary a => Binary [a] where
     {-# INLINE encode #-}
     encode = encodeList encode
-    {-# INLINE decode #-}
-    decode = D.decodeList decode
+    -- {-# INLINE decode #-}
+    -- decode = D.decodeList decode
 
 instance (Binary a) => Binary (Maybe a) where
     {-# INLINE encode #-}
-    encode = maybe (word8 0) ((word8 1 <>) . encode)
-    {-# INLINE decode #-}
-    decode = D.decodeMaybe decode
+    encode = maybe (E.arrayLen 0) ((E.arrayLen 1 <>) . encode)
+    -- {-# INLINE decode #-}
+    -- decode = D.decodeMaybe decode
 
 instance (Binary a, Binary b) => Binary (Either a b) where
     {-# INLINE encode #-}
-    encode = either ((word8 0 <>) . encode) ((word8 1 <>) . encode)
-    {-# INLINE decode #-}
-    decode = D.decodeEither decode decode
+    encode = either (\l -> E.arrayLen 1 <> E.word8 0 <> encode l)
+                    (\r -> E.arrayLen 1 <> E.word8 1 <> encode r)
+    -- {-# INLINE decode #-}
+    -- decode = D.decodeEither decode decode
 
 ------------------------------------------------------------------------
 -- ByteStrings (have specially efficient instances)
 
 instance Binary S.ByteString where
     {-# INLINE encode #-}
-    encode = byteString
-    {-# INLINE decode #-}
-    decode = D.byteString
+    encode = E.binary
+    -- {-# INLINE decode #-}
+    -- decode = D.byteString
 
 instance Binary L.ByteString where
-    encode = L.foldrChunks (\bs s -> encode bs <> s) (encode S.empty)
-    decode = do
-      bs <- decode
-      if S.null bs
-        then return L.Empty
-        else L.Chunk bs <$> decode
+    encode = L.foldrChunks (\bs os -> E.arrayLen 2 <> E.binary bs <> os)
+                           (E.arrayLen 0)
+    -- decode = do
+    --   bs <- decode
+    --   if S.null bs
+    --     then return L.Empty
+    --     else L.Chunk bs <$> decode
 
 ------------------------------------------------------------------------
 -- Maps and Sets
 
 instance (Ord a, Binary a) => Binary (Set.Set a) where
     {-# INLINE encode #-}
-    encode = encode . Set.toAscList
-    {-# INLINE decode #-}
-    decode = Set.fromAscList <$> decode
+    encode = \s -> E.arrayLen (Set.size s) <>
+                   Set.foldr (\x os -> encode x <> os) mempty s
+    -- {-# INLINE decode #-}
+    -- decode = Set.fromAscList <$> decode
 
 instance (Ord k, Binary k, Binary e) => Binary (Map.Map k e) where
     {-# INLINE encode #-}
-    encode = encode . Map.toAscList
-    {-# INLINE decode #-}
-    decode = Map.fromAscList <$> decode
+    encode = \m -> E.mapLen (Map.size m) <>
+                   Map.foldrWithKey (\k v os -> encode k <> encode v <> os) mempty m
+    -- {-# INLINE decode #-}
+    -- decode = Map.fromAscList <$> decode
 
 instance Binary IntSet.IntSet where
     {-# INLINE encode #-}
-    encode = encode . IntSet.toAscList
-    {-# INLINE decode #-}
-    decode = IntSet.fromAscList <$> decode
+    encode = \s -> E.arrayLen (IntSet.size s) <>
+                   IntSet.foldr (\x os -> encode x <> os) mempty s
+    -- {-# INLINE decode #-}
+    -- decode = IntSet.fromAscList <$> decode
 
 instance (Binary e) => Binary (IntMap.IntMap e) where
     {-# INLINE encode #-}
-    encode = encode . IntMap.toAscList
-    {-# INLINE decode #-}
-    decode = IntMap.fromAscList <$> decode
+    encode = \m -> E.mapLen (IntMap.size m) <>
+                   IntMap.foldrWithKey (\k v os -> encode k <> encode v <> os) mempty m
+
+    -- {-# INLINE decode #-}
+    -- decode = IntMap.fromAscList <$> decode
+
+-- TODO: Strict maps
 
 ------------------------------------------------------------------------
 -- Queues and Sequences
 
 instance (Binary e) => Binary (Seq.Seq e) where
     {-# INLINE encode #-}
-    encode = \s -> int (Seq.length s) <> foldMap encode s
-    {-# INLINE decode #-}
-    decode = do
-        D.int >>= go Seq.empty
-      where
-        go !s !len
-          | len <= 0  = return s
-          | otherwise = do
-              x <- decode
-              go (s Seq.|> x) (len - 1)
+    encode = \s -> E.arrayLen (Seq.length s) <> foldMap encode s
+    -- {-# INLINE decode #-}
+    -- decode = do
+    --     D.int >>= go Seq.empty
+    --   where
+    --     go !s !len
+    --       | len <= 0  = return s
+    --       | otherwise = do
+    --           x <- decode
+    --           go (s Seq.|> x) (len - 1)
 
 
 ------------------------------------------------------------------------
@@ -378,15 +388,15 @@ instance (Binary e) => Binary (Seq.Seq e) where
 
 instance Binary Double where
     {-# INLINE encode #-}
-    encode = double
-    {-# INLINE decode #-}
-    decode = D.double
+    encode = E.double
+    -- {-# INLINE decode #-}
+    -- decode = D.double
 
 instance Binary Float where
     {-# INLINE encode #-}
-    encode = float
-    {-# INLINE decode #-}
-    decode = D.float
+    encode = E.float
+    -- {-# INLINE decode #-}
+    -- decode = D.float
 
 ------------------------------------------------------------------------
 -- Trees
@@ -396,18 +406,19 @@ instance (Binary e) => Binary (T.Tree e) where
     encode =
         go
       where
-        go (T.Node x cs) = encode x <> encodeList go cs
+        go (T.Node x cs) = E.arrayLen 2 <> encode x <> encodeList go cs
 
-    {-# INLINE decode #-}
-    decode =
-        go
-      where
-        go = T.Node <$> decode <*> D.decodeList go
+    -- {-# INLINE decode #-}
+    -- decode =
+    --     go
+    --   where
+    --     go = T.Node <$> decode <*> D.decodeList go
 
 
 ------------------------------------------------------------------------
 -- Arrays
 
+{-
 instance (Binary i, Ix i, Binary e) => Binary (Array i e) where
     {-# INLINE encode #-}
     encode = \a -> encode (bounds a) <> encode (elems a)
@@ -422,6 +433,7 @@ instance (Binary i, Ix i, Binary e, IArray UArray e) => Binary (UArray i e) wher
     encode = \a -> encode (bounds a) <> encode (elems a)
     {-# INLINE decode #-}
     decode = listArray <$> decode <*> decode
+
 
 #ifdef GENERICS
 ------------------------------------------------------------------------
@@ -540,3 +552,16 @@ instance SumSize (C1 c a) where
     sumSize = Tagged 1
     {-# INLINE sumSize #-}
 #endif
+-}
+{-
+#ifdef GENERICS
+    default encode :: (Generic t, GBinary (Rep t)) => Encoding t
+    encode = gEncode . from
+    {-# INLINE encode #-}
+
+    default decode :: (Generic t, GBinary (Rep t)) => D.Decoder t
+    decode = to <$> gDecode
+    {-# INLINE decode #-}
+#endif
+-}
+

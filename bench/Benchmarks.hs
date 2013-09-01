@@ -12,33 +12,34 @@
 module Main (main) where
 
 import           Prelude hiding (words)
-import           Data.Monoid ((<>))
+-- import           Data.Monoid ((<>))
 import           Criterion.Main
 import           Control.DeepSeq
-import           Control.Applicative
+-- import           Control.Applicative
 
-import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
-import qualified Data.Blaze.Binary.Decoding       as Blaze (Decoder, runDecoder)
-import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s, string)
-import qualified Data.Blaze.Binary.IterDecoding   as IterBlaze (DStream, decodeWith, word8s, string, listOfWord8s )
-import qualified Data.Blaze.Binary.StreamDecoding as StreamBlaze (benchWord8s)
+-- import           Data.Blaze.Binary.Encoding (renderTextualUtf8, renderTagged)
+-- import qualified Data.Blaze.Binary.Decoding       as Blaze (Decoder, runDecoder)
+-- import qualified Data.Blaze.Binary.ParamDecoding  as ParamBlaze (Decoder, runDecoder, word8s, string)
+-- import qualified Data.Blaze.Binary.IterDecoding   as IterBlaze (DStream, decodeWith, word8s, string, listOfWord8s )
+-- import qualified Data.Blaze.Binary.StreamDecoding as StreamBlaze (benchWord8s)
 import qualified Data.ByteString             as S
-import qualified Data.ByteString.Internal    as S
+-- import qualified Data.ByteString.Internal    as S
 import qualified Data.ByteString.Lazy        as L
-import qualified Data.ByteString.Lazy.Char8  as LC8
+-- import qualified Data.ByteString.Lazy.Char8  as LC8
 import           Data.Serialize
 
 import           Data.Binary (Binary)
 import qualified Data.Binary as Binary
 
-import qualified Data.Blaze.Binary as Blaze
+-- import qualified Data.Blaze.Binary as Blaze
+import qualified Codec.MsgPack as MsgPack
 
 import qualified Data.Sequence as Seq
 import           Data.Tree
 import           Data.Word
-import qualified Data.Foldable as F (toList)
+-- import qualified Data.Foldable as F (toList)
 
-import qualified Data.Attoparsec as A
+-- import qualified Data.Attoparsec as A
 
 ------------------------------------------------------------------------------
 -- Benchmark
@@ -46,7 +47,7 @@ import qualified Data.Attoparsec as A
 
 -- | The number of repetitions to consider.
 nRepl :: Int
-nRepl = 1000
+nRepl = 10
 
 -- We use NOINLINE to ensure that GHC has no chance of optimizing too much.
 
@@ -93,30 +94,30 @@ charData n = take n ['\0'..]
 
 main :: IO ()
 main = Criterion.Main.defaultMain $
-    [ bgroup ("decode (" ++ show nRepl ++ ")")
+    -- [ bgroup ("decode (" ++ show nRepl ++ ")")
        -- [ bench "param-blaze-binary: word8s" $ nf
        --     (benchParamDecoder ParamBlaze.word8s . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
-       [ bench "iter-blaze-binary: word8s" $ nf
-           (benchIterDecoder IterBlaze.word8s)
-           (Blaze.toByteString $ word8Data nRepl)
-       , bench "binary-cps: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
-       , bench "iter-blaze-binary: [word8s]" $ nf
-           (benchIterDecoder IterBlaze.listOfWord8s)
-           (Blaze.toByteString $ word8sData nRepl)
-       , bench "binary-cps: [word8s]" $ nf (Binary.decode :: L.ByteString -> [[Word8]]) (Binary.encode $ word8sData nRepl)
+       -- [ bench "iter-blaze-binary: word8s" $ nf
+       --     (benchIterDecoder IterBlaze.word8s)
+       --     (Blaze.toByteString $ word8Data nRepl)
+       -- , bench "binary-cps: word8s" $ nf (Binary.decode :: L.ByteString -> [Word8]) (Binary.encode $ word8Data nRepl)
+       -- , bench "iter-blaze-binary: [word8s]" $ nf
+       --     (benchIterDecoder IterBlaze.listOfWord8s)
+       --     (Blaze.toByteString $ word8sData nRepl)
+       -- , bench "binary-cps: [word8s]" $ nf (Binary.decode :: L.ByteString -> [[Word8]]) (Binary.encode $ word8sData nRepl)
        -- , bench "attoparsec-noinline: word8s" $ nf
        --     (benchAttoparsec attoBinaryWord8sNoInline)
        --     (Blaze.toByteString $ word8Data nRepl)
        -- , bench "param-blaze-binary: string" $ nf
        --     (benchParamDecoder ParamBlaze.string)
        --     (Blaze.toByteString $ charData nRepl)
-       , bench "iter-blaze-binary: string" $ nf
-           (benchIterDecoder IterBlaze.string)
-           (Blaze.toByteString $ charData nRepl)
+       -- , bench "iter-blaze-binary: string" $ nf
+           -- (benchIterDecoder IterBlaze.string)
+           -- (Blaze.toByteString $ charData nRepl)
     --   , bench "blaze-binary: word8sSimple" $ nf (benchDecoder Blaze.word8sSimple) (Blaze.toByteString $ word8Data nRepl)
     --   , bench "cereal: word8s" $ nf (decodeLazy :: L.ByteString -> Either String [Word8]) (encodeLazy $ word8Data nRepl)
-       , bench "binary-cps: string" $ nf (Binary.decode :: L.ByteString -> String) (Binary.encode $ charData nRepl)
+       -- , bench "binary-cps: string" $ nf (Binary.decode :: L.ByteString -> String) (Binary.encode $ charData nRepl)
        -- , bench "stream-blaze-binary: word8s" $ nf
        --     (StreamBlaze.benchWord8s . S.copy)
        --     (Blaze.toByteString $ word8Data nRepl)
@@ -168,41 +169,41 @@ main = Criterion.Main.defaultMain $
            (benchAttoparsec attoBinaryWord8s)
            (Blaze.toByteString $ word8Data nRepl)
 >>>>>>> basvandijk/master -}
-       ]
+       -- ]
 
-    , bgroup "encode"
-      [ benchmarks "[Word8] "   id        (word8Data nRepl)
-      , benchmarks "[[Word8]]"   id       (word8sData nRepl)
-      , benchmarks "String "    id        (charData nRepl)
-      , benchmarks "[String] "  id        (stringData nRepl)
-      , benchmarks "testValue " id        (testValue nRepl)
-      , benchmarks "Tree Int "  id        (treeIntData nRepl)
-      , benchmarks "Seq Int "   id        (seqIntData nRepl)
-      , benchmarks "[Int] "     id        (intData nRepl)
+    [ bgroup "encode"
+      [ benchmarks "[Word8] "   id (word8Data nRepl)
+      , benchmarks "[[Word8]]"  id (word8sData nRepl)
+      , benchmarks "String "    id (charData nRepl)
+      , benchmarks "[String] "  id (stringData nRepl)
+      , benchmarks "testValue " id (testValue nRepl)
+      , benchmarks "Tree Int "  id (treeIntData nRepl)
+      , benchmarks "Seq Int "   id (seqIntData nRepl)
+      , benchmarks "[Int] "     id (intData nRepl)
       ]
     ]
   where
-    benchAttoparsec :: A.Parser a -> S.ByteString -> a
-    benchAttoparsec p bs = case A.eitherResult $ A.parse p bs of
-      Left msg -> error msg
-      Right x  -> x
+    -- benchAttoparsec :: A.Parser a -> S.ByteString -> a
+    -- benchAttoparsec p bs = case A.eitherResult $ A.parse p bs of
+    --   Left msg -> error msg
+    --   Right x  -> x
 
-    benchDecoder :: Blaze.Decoder a -> S.ByteString -> a
-    benchDecoder d bs = case Blaze.runDecoder d bs of
-      Left msg -> error msg
-      Right x  -> x
+    -- benchDecoder :: Blaze.Decoder a -> S.ByteString -> a
+    -- benchDecoder d bs = case Blaze.runDecoder d bs of
+    --   Left msg -> error msg
+    --   Right x  -> x
 
-    benchParamDecoder :: ParamBlaze.Decoder a -> S.ByteString -> a
-    benchParamDecoder d bs = case ParamBlaze.runDecoder d bs of
-      Left msg -> error msg
-      Right x  -> x
+    -- benchParamDecoder :: ParamBlaze.Decoder a -> S.ByteString -> a
+    -- benchParamDecoder d bs = case ParamBlaze.runDecoder d bs of
+    --   Left msg -> error msg
+    --   Right x  -> x
 
-    benchIterDecoder :: IterBlaze.DStream a -> S.ByteString -> a
-    benchIterDecoder d bs = case IterBlaze.decodeWith d bs of
-      Left msg -> error msg
-      Right x  -> x
+    -- benchIterDecoder :: IterBlaze.DStream a -> S.ByteString -> a
+    -- benchIterDecoder d bs = case IterBlaze.decodeWith d bs of
+    --   Left msg -> error msg
+    --   Right x  -> x
 
-    benchmarks :: forall a b. (Binary a, Blaze.Binary a, Serialize a, NFData a)
+    benchmarks :: forall a b. (Binary a, MsgPack.Binary a, Serialize a, NFData a)
                => String -> (b -> a) -> b -> Benchmark
     benchmarks name f x = bgroup (name ++ show nRepl)
      -- [ bgroup "decode"
@@ -212,9 +213,9 @@ main = Criterion.Main.defaultMain $
      --   , bench "binary" $ nf (Binary.decode :: L.ByteString -> a) (Binary.encode $ f  x)
      --   ]
      --, bgroup "encode"
-       [ bench "blaze-binary" $ nf (L.length . Blaze.toLazyByteString . f) x
+       [ bench "msgpack-binary" $ nf (L.length . MsgPack.toLazyByteString . f) x
        -- , bench "blaze-binary tagged" $ whnf (L.length . renderTagged . Blaze.encode . f) x andrea
-       -- , bench "cereal" $ nf (L.length . encodeLazy . f)  x
+       , bench "cereal" $ nf (L.length . encodeLazy . f)  x
        , bench "binary" $ nf (L.length . Binary.encode . f) x
        ]
       --]
@@ -226,12 +227,15 @@ testNewBinary x =
   LC8.putStrLn $ renderTextualUtf8 $ Blaze.encode (x, Blaze.toLazyByteString x)
 -}
 
+{-
 instance NFData S.ByteString where
     rnf (S.PS _ _ _) = ()
 
 instance NFData a => NFData (Seq.Seq a) where
     rnf = rnf . F.toList
+-}
 
+{-
 ------------------------------------------------------------------------------
 -- Attoparsec
 ------------------------------------------------------------------------------
@@ -257,3 +261,4 @@ attoBinaryWord8sNoInline = genAttoBinaryWord8s attoWord8_noinline
 {-# NOINLINE attoWord8_noinline #-}
 attoWord8_noinline :: A.Parser Word8
 attoWord8_noinline = A.anyWord8
+-}
