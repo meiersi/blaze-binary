@@ -12,6 +12,75 @@
 -- MsgPack encoding support.
 --
 -----------------------------------------------------------------------------
+
+{- An improved binary format for the 'binary' library -
+ ------------------------------------------------------
+
+   *  MsgPack: a binary format with a similar structure as JSON
+
+   * can be parsed without schema/type information
+
+      data Object
+          = ONil
+          | OBool Bool
+          | OInteger Int
+          | OFloat Float
+          | ODouble Double
+          | OBinary ByteString
+          | OText   Text
+          | OArray [Object]
+          | OMap [(Object, Object)]
+
+
+   * compact representation; e.g., integers
+
+        positive fixnum stores 7-bit positive integer
+        +--------+
+        |0XXXXXXX|
+        +--------+
+
+        * 0XXXXXXX is 8-bit unsigned integer
+
+        uint 8 stores a 8-bit unsigned integer
+        +--------+--------+
+        |  0xcc  |ZZZZZZZZ|
+        +--------+--------+
+
+        uint 16 stores a 16-bit big-endian unsigned integer
+        +--------+--------+--------+
+        |  0xcd  |ZZZZZZZZ|ZZZZZZZZ|
+        +--------+--------+--------+
+
+        uint 32 stores a 32-bit big-endian unsigned integer
+        +--------+--------+--------+--------+--------+
+        |  0xce  |ZZZZZZZZ|ZZZZZZZZ|ZZZZZZZZ|ZZZZZZZZ
+        +--------+--------+--------+--------+--------+
+
+        uint 64 stores a 64-bit big-endian unsigned integer
+        +--------+--------+--------+--------+--------+--------+--------+--------+--------+
+        |  0xcf  |ZZZZZZZZ|ZZZZZZZZ|ZZZZZZZZ|ZZZZZZZZ|ZZZZZZZZ|ZZZZZZZZ|ZZZZZZZZ|ZZZZZZZZ|
+        +--------+--------+--------+--------+--------+--------+--------+--------+--------+
+
+
+   * Goal: use a msg-pack based binary format for our standard binary encoding
+           and get for free
+
+            - schema-less parsing (important for debugging network requests)
+            - language interoperability
+            - good small-message/small-value performance
+            - machine-independence
+
+   * using some clever implementation tricks, we can do this even faster than
+     the most recent 'cereal' or 'binary' encoders.
+
+      => let's look at two of them now.
+
+-}
+
+
+
+
+
 module Codec.MsgPack.Encoder (
 
       Encoder
@@ -226,6 +295,7 @@ int64MP =
     condB (>= -0xffff)     (preFixed1 0xd1 (fromIntegral >$< P.word16BE)) $
     condB (>= -0xffffffff) (preFixed1 0xd2 (fromIntegral >$< P.word32BE)) $
                            (preFixed1 0xd3 (fromIntegral >$< P.word64BE))
+P.BoundedPrim a
 {-
 negative fixnum stores 5-bit negative integer
 +--------+

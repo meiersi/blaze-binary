@@ -28,9 +28,15 @@ module Codec.MsgPack (
     , toByteString
     , toLazyByteString
 
+    , toHexBinary
+    , toHexMsgPack
+    , toHex
+
     ) where
 
 -- import Control.Applicative
+
+import qualified Data.Binary as Binary
 
 import qualified Codec.MsgPack.Encoder as E
 -- import qualified Data.Blaze.Binary.Decoding as D
@@ -39,6 +45,7 @@ import Data.Word
 import Data.Monoid
 import Data.Foldable (foldMap)
 import Foreign
+import Numeric (showHex)
 
 -- And needed for the instances:
 -- import           Data.Array.Unboxed
@@ -93,10 +100,26 @@ class Binary t where
 toByteString :: Binary t => t -> S.ByteString
 toByteString = L.toStrict . toLazyByteString
 
+toHexMsgPack :: Binary t => t -> String
+toHexMsgPack =
+    concatMap hexWord8 . L.unpack . toLazyByteString
+
+toHexBinary :: Binary.Binary t => t -> String
+toHexBinary = concatMap hexWord8 . L.unpack . Binary.encode
 
 -- | Encode a value to a lazy 'L.ByteString'.
 toLazyByteString :: Binary t => t -> L.ByteString
 toLazyByteString = B.toLazyByteString . E.toBuilder . encode
+
+toHex :: (Binary.Binary t, Binary t) => t -> IO ()
+toHex x = putStrLn $ unlines [ "msgpack: " ++ toHexMsgPack x
+                             , "binary:  " ++ toHexBinary x
+                             ]
+
+hexWord8 :: Word8 -> String
+hexWord8 w = pad (showHex w "")
+  where
+    pad cs = replicate (2 - length cs) '0' ++ cs
 
 ------------------------------------------------------------------------
 -- Simple instances
