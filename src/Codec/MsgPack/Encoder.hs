@@ -117,8 +117,8 @@ import Prelude hiding (putChar)
 import           Data.Bits
 import           Data.Char                                           (ord)
 import qualified Data.ByteString                                     as S
-import qualified Data.ByteString.Char8                               as SC8
-import qualified Data.ByteString.Lazy                                as L
+-- import qualified Data.ByteString.Char8                               as SC8
+-- import qualified Data.ByteString.Lazy                                as L
 import qualified Data.ByteString.Builder                        as B
 -- import qualified Data.ByteString.Lazy.Builder.ASCII                  as B
 -- import qualified Data.ByteString.Lazy.Builder.Extras                 as B
@@ -144,23 +144,24 @@ infixr 6 <>
 #endif
 
 
+
 ------------------------------------------------------------------------
 
 -- | The representation for a stream of values to be serialized.
 data OutStreamRep
-    = VArrayLen {-# UNPACK #-} !Word         OutStreamRep
-    | VWord64   {-# UNPACK #-} !Word64       OutStreamRep
-    | VInt64    {-# UNPACK #-} !Int64        OutStreamRep
-    | VChar     {-# UNPACK #-} !Char         OutStreamRep
-    | VFalse                                 OutStreamRep
-    | VTrue                                  OutStreamRep
-    | VFloat    {-# UNPACK #-} !Float        OutStreamRep
-    | VDouble   {-# UNPACK #-} !Double       OutStreamRep
-    | VMapLen   {-# UNPACK #-} !Word         OutStreamRep
-    | VText                    !T.Text       OutStreamRep
-    | VBinary                  !S.ByteString OutStreamRep
-    | VNil                                   OutStreamRep
-    | VEnd
+    = OArrayLen {-# UNPACK #-} !Word         OutStreamRep
+    | OWord64   {-# UNPACK #-} !Word64       OutStreamRep
+    | OInt64    {-# UNPACK #-} !Int64        OutStreamRep
+    | OChar     {-# UNPACK #-} !Char         OutStreamRep
+    | OFalse                                 OutStreamRep
+    | OTrue                                  OutStreamRep
+    | OFloat    {-# UNPACK #-} !Float        OutStreamRep
+    | ODouble   {-# UNPACK #-} !Double       OutStreamRep
+    | OMapLen   {-# UNPACK #-} !Word         OutStreamRep
+    | OText                    !T.Text       OutStreamRep
+    | OBinary                  !S.ByteString OutStreamRep
+    | ONil                                   OutStreamRep
+    | OEnd
 
 type Encoder t = t -> OutStream
 
@@ -180,26 +181,26 @@ instance Monoid OutStream where
 -- | Convert a message-pack output stream to a bytestring 'B.Builder'.
 toBuilder :: OutStream -> B.Builder
 toBuilder =
-    \vs0 -> BI.builder $ step (unOutStream vs0 VEnd)
+    \vs0 -> BI.builder $ step (unOutStream vs0 OEnd)
   where
     step vs1 k (BI.BufferRange op0 ope0) =
         go vs1 op0
       where
         go vs !op
           | op `plusPtr` bound <= ope0 = case vs of
-              VWord64   x vs' -> PI.runB word64MP   x op >>= go vs'
-              VInt64    x vs' -> PI.runB int64MP    x op >>= go vs'
-              VNil        vs' -> PI.runB nilMP ()     op >>= go vs'
-              VFalse      vs' -> PI.runB falseMP ()   op >>= go vs'
-              VTrue       vs' -> PI.runB trueMP ()    op >>= go vs'
-              VFloat    x vs' -> PI.runB floatMP    x op >>= go vs'
-              VDouble   x vs' -> PI.runB doubleMP   x op >>= go vs'
-              VArrayLen x vs' -> PI.runB arrayLenMP x op >>= go vs'
-              VMapLen   x vs' -> PI.runB mapLenMP   x op >>= go vs'
-              VChar     x vs' -> PI.runB charMP     x op >>= go vs'
-              VText     x vs' -> BI.runBuilderWith (textMP x)   (step vs' k) (BI.BufferRange op ope0)
-              VBinary   x vs' -> BI.runBuilderWith (binaryMP x) (step vs' k) (BI.BufferRange op ope0)
-              VEnd            -> k (BI.BufferRange op ope0)
+              OWord64   x vs' -> PI.runB word64MP   x op >>= go vs'
+              OInt64    x vs' -> PI.runB int64MP    x op >>= go vs'
+              ONil        vs' -> PI.runB nilMP ()     op >>= go vs'
+              OFalse      vs' -> PI.runB falseMP ()   op >>= go vs'
+              OTrue       vs' -> PI.runB trueMP ()    op >>= go vs'
+              OFloat    x vs' -> PI.runB floatMP    x op >>= go vs'
+              ODouble   x vs' -> PI.runB doubleMP   x op >>= go vs'
+              OArrayLen x vs' -> PI.runB arrayLenMP x op >>= go vs'
+              OMapLen   x vs' -> PI.runB mapLenMP   x op >>= go vs'
+              OChar     x vs' -> PI.runB charMP     x op >>= go vs'
+              OText     x vs' -> BI.runBuilderWith (textMP x)   (step vs' k) (BI.BufferRange op ope0)
+              OBinary   x vs' -> BI.runBuilderWith (binaryMP x) (step vs' k) (BI.BufferRange op ope0)
+              OEnd            -> k (BI.BufferRange op ope0)
           | otherwise = return $ BI.bufferFull bound op (step vs k)
 
     bound = max' word64MP $ max' int64MP $ max' nilMP $
@@ -295,7 +296,7 @@ int64MP =
     condB (>= -0xffff)     (preFixed1 0xd1 (fromIntegral >$< P.word16BE)) $
     condB (>= -0xffffffff) (preFixed1 0xd2 (fromIntegral >$< P.word32BE)) $
                            (preFixed1 0xd3 (fromIntegral >$< P.word64BE))
-P.BoundedPrim a
+
 {-
 negative fixnum stores 5-bit negative integer
 +--------+
@@ -509,15 +510,15 @@ where
 
 {-# INLINE nil #-}
 nil :: OutStream
-nil = OutStream VNil
+nil = OutStream ONil
 
 {-# INLINE false #-}
 false :: OutStream
-false = OutStream VFalse
+false = OutStream OFalse
 
 {-# INLINE true #-}
 true :: OutStream
-true = OutStream VTrue
+true = OutStream OTrue
 
 {-# INLINE bool #-}
 bool :: Encoder Bool
@@ -525,68 +526,68 @@ bool = \x -> (if x then true else false)
 
 {-# INLINE float #-}
 float :: Encoder Float
-float = OutStream . VFloat
+float = OutStream . OFloat
 
 {-# INLINE double #-}
 double :: Encoder Double
-double = OutStream . VDouble
+double = OutStream . ODouble
 
 {-# INLINE word #-}
 word :: Encoder Word
-word = OutStream . VWord64 . fromIntegral
+word = OutStream . OWord64 . fromIntegral
 
 {-# INLINE word8 #-}
 word8 :: Encoder Word8
-word8 = OutStream . VWord64 . fromIntegral
+word8 = OutStream . OWord64 . fromIntegral
 
 {-# INLINE word16 #-}
 word16 :: Encoder Word16
-word16 = OutStream . VWord64 . fromIntegral
+word16 = OutStream . OWord64 . fromIntegral
 
 {-# INLINE word32 #-}
 word32 :: Encoder Word32
-word32 = OutStream . VWord64 . fromIntegral
+word32 = OutStream . OWord64 . fromIntegral
 
 {-# INLINE word64 #-}
 word64 :: Encoder Word64
-word64 = OutStream . VWord64
+word64 = OutStream . OWord64
 
 {-# INLINE int #-}
 int :: Encoder Int
-int = OutStream . VInt64 . fromIntegral
+int = OutStream . OInt64 . fromIntegral
 
 {-# INLINE int8 #-}
 int8 :: Encoder Int8
-int8 = OutStream . VInt64 . fromIntegral
+int8 = OutStream . OInt64 . fromIntegral
 
 {-# INLINE int16 #-}
 int16 :: Encoder Int16
-int16 = OutStream . VInt64 . fromIntegral
+int16 = OutStream . OInt64 . fromIntegral
 
 {-# INLINE int32 #-}
 int32 :: Encoder Int32
-int32 = OutStream . VInt64 . fromIntegral
+int32 = OutStream . OInt64 . fromIntegral
 
 {-# INLINE int64 #-}
 int64 :: Encoder Int64
-int64 = OutStream . VInt64
+int64 = OutStream . OInt64
 
 {-# INLINE binary #-}
 binary :: Encoder S.ByteString
-binary = OutStream . VBinary
+binary = OutStream . OBinary
 
 {-# INLINE char #-}
 char :: Encoder Char
-char = OutStream . VChar
+char = OutStream . OChar
 
 {-# INLINE text #-}
 text :: Encoder T.Text
-text = OutStream . VText
+text = OutStream . OText
 
 {-# INLINE arrayLen #-}
 arrayLen :: Encoder Int
-arrayLen = OutStream . VArrayLen . fromIntegral
+arrayLen = OutStream . OArrayLen . fromIntegral
 
 {-# INLINE mapLen #-}
 mapLen :: Encoder Int
-mapLen = OutStream . VMapLen . fromIntegral
+mapLen = OutStream . OMapLen . fromIntegral
