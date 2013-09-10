@@ -10,11 +10,15 @@ import           Control.Applicative
 
 import qualified Data.ByteString as S
 import qualified Data.Text       as T
+import qualified Data.Vector     as V
 import           Foreign
 import           GHC.Prim
 import           GHC.Word
 
-type MsgPackRead = Addr# -> (# Addr#, MsgPackValue #)
+
+type MsgPackRead = (Int, UnsafeMsgPackRead)
+
+type UnsafeMsgPackRead = Addr# -> (# Addr#, MsgPackValue #)
 
 -- | The representation for a stream of values to be serialized.
 data MsgPackValue
@@ -35,31 +39,31 @@ data MsgPackValue
     deriving (Show)
 
 readNil, readFalse, readTrue :: MsgPackRead
-readNil   ip# = (# ip# `plusAddr#` 1#, VNil #)
-readFalse ip# = (# ip# `plusAddr#` 1#, VBool False #)
-readTrue  ip# = (# ip# `plusAddr#` 1#, VBool True  #)
+readNil   = (0, \ip# -> (# ip# `plusAddr#` 1#, VNil #))
+readFalse = (0, \ip# -> (# ip# `plusAddr#` 1#, VBool False #))
+readTrue  = (0, \ip# -> (# ip# `plusAddr#` 1#, VBool True  #))
 
 
 readPosFixnum :: MsgPackValue -> MsgPackRead
-readPosFixnum i ip# = (# ip# `plusAddr#` 1#, i #)
+readPosFixnum i = (0, \ip# -> (# ip# `plusAddr#` 1#, i #))
 
 readWord8 :: MsgPackRead
-readWord8 ip# = case indexWord8OffAddr# ip# 1# of
+readWord8 = (,) 1 $ \ip# -> case indexWord8OffAddr# ip# 1# of
     w# -> (# ip# `plusAddr#` 2#, VWord64 (fromIntegral $ W8# w#) #)
 
 
 readWord16 :: MsgPackRead
-readWord16 ip# =
+readWord16 = (,) 2 $ \ip# ->
     case indexWord8OffAddr# ip# 1# of
      w0# ->
       case indexWord8OffAddr# ip# 2# of
        w1# -> let !res = VWord64 $ fromIntegral $ w w0# `shiftL` 8 .|. w w1#
-              in  (# ip# `plusAddr#` 3# , res #)
+              in (# ip# `plusAddr#` 3# , res #)
   where
     w w# = W# w#
 
 readWord32 :: MsgPackRead
-readWord32 ip# =
+readWord32 = (,) 4 $ \ip# ->
     case indexWord8OffAddr# ip# 1# of
      w0# ->
       case indexWord8OffAddr# ip# 2# of
@@ -71,13 +75,13 @@ readWord32 ip# =
                                                       w w1# `shiftL` 16 .|.
                                                       w w2# `shiftL`  8 .|.
                                                       w w3#
-                  in (# ip# `plusAddr#` 5# , res  #)
+                  in (# ip# `plusAddr#` 5# , res #)
   where
     w w# = W# w#
 
 
 readWord64 :: MsgPackRead
-readWord64 ip# =
+readWord64 = (,) 8 $ \ip# ->
     case indexWord8OffAddr# ip# 1# of
      w0# ->
       case indexWord8OffAddr# ip# 2# of
@@ -106,30 +110,32 @@ readWord64 ip# =
   where
     w w# = W64# w#
 
-{-
-readWord64 :: MsgPackRead
-readWord64 ip# =
-    case indexWord8OffAddr# ip# 1# of
-     w0# ->
-      case indexWord8OffAddr# ip# 2# of
-       w1# ->
-        case indexWord8OffAddr# ip# 3# of
-         w2# ->
-          case indexWord8OffAddr# ip# 4# of
-           w3# ->
-            (# ip# `plusAddr#` 5#
-            ,  VWord64 $ fromIntegral $ w w0# `shiftL` 24 .|.
-                                        w w1# `shiftL` 16 .|.
-                                        w w2# `shiftL`  8 .|.
-                                        w w3#
-            #)
-  where
-    w w# = W# w#
-
--}
 
 
-{-
+fastReadTable :: V.Vector UnsafeMsgPackRead
+fastReadTable = V.generate 256 $ \i -> case lookup (fromIntegral i) readRel of
+    Just read -> snd read
+    Nothing   -> error $ "fastReadTable: " ++ show i ++ " not implemented."
+
+slowReadTable :: V.Vector MsgPackRead
+slowReadTable = V.generate 256 $ \i -> case lookup (fromIntegral i) readRel of
+    Just read -> read
+    Nothing   -> error $ "slowReadTable: " ++ show i ++ " not implemented."
+
+readRel :: [(Word8, MsgPackRead)]
+readRel =
+  [ (0xc0, readNil)
+  , (0xc2, readFalse)
+  , (0xc3, readTrue)
+  ] ++
+  [ (i, readPosFixnum $! (VWord64 (fromIntegral i))) | i <- [0..127] ] ++
+  [ (0xcc, readWord8)
+  , (0xcd, readWord16)
+  , (0xce, readWord32)
+  , (0xcf, readWord64)
+  ]
+
+
 data Decoder a = Decoder
     { runDecoder :: forall r. (a -> InStream r) -> InStream r }
 
@@ -199,27 +205,32 @@ double :: Decoder Double
 double = primD $ \k v -> case v of VDouble x -> k x
                                    _         -> wrongType "double" v
 
-{-
 {-# INLINE word #-}
 word :: Decoder Word
-word =
+word = primD $ \k v -> case v of VWord64 x -> k $! fromIntegral x
+                                 _         -> wrongType "word" v
 
 {-# INLINE word8 #-}
 word8 :: Decoder Word8
-word8 =
+word8 = primD $ \k v -> case v of VWord64 x -> k $! fromIntegral x
+                                  _         -> wrongType "word8" v
 
 {-# INLINE word16 #-}
 word16 :: Decoder Word16
-word16 =
+word16 = primD $ \k v -> case v of VWord64 x -> k $! fromIntegral x
+                                   _         -> wrongType "word16" v
 
 {-# INLINE word32 #-}
 word32 :: Decoder Word32
-word32 =
+word32 = primD $ \k v -> case v of VWord64 x -> k $! fromIntegral x
+                                   _         -> wrongType "word32" v
 
 {-# INLINE word64 #-}
 word64 :: Decoder Word64
-word64 =
+word64 = primD $ \k v -> case v of VWord64 x -> k $! fromIntegral x
+                                   _         -> wrongType "word64" v
 
+{-
 {-# INLINE int #-}
 int :: Decoder Int
 int = primD . OInt64 . fromIntegral
@@ -557,5 +568,4 @@ chr4# (W8# x1#) (W8# x2#) (W8# x3#) (W8# x4#) =
     !z3# = uncheckedIShiftL# (y3# -# 0x80#) 6#
     !z4# = y4# -# 0x80#
 {-# INLINE chr4# #-}
--}
 -}
